@@ -10,6 +10,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var ErrSocketClosed = errors.New("socket is closed")
+
 type TimeoutHeap []*TimeoutCallback
 
 func (h *TimeoutHeap) Len() int           { return len(*h) }
@@ -62,7 +64,7 @@ func NewEventLoop() (*EventLoop, error) {
 	}
 	heap.Init(&el.TimeoutCallbacks)
 	// Register the pipe's read end with kqueue
-	err = el.Register(readFd, unix.EVFILT_READ, func(fd int, filter int16) {
+	err = el.Register(&Socket{Fd: readFd}, unix.EVFILT_READ, func(fd int, filter int16) {
 		var buf [8]byte
 		_, _ = unix.Read(fd, buf[:]) // Clear the pipe notification
 		el.executePendingTasks()
@@ -77,17 +79,20 @@ func NewEventLoop() (*EventLoop, error) {
 	return el, nil
 }
 
-func (el *EventLoop) Register(fd int, filter int16, cb EventCallback) error {
+func (el *EventLoop) Register(socket *Socket, filter int16, cb EventCallback) error {
+	if socket.Closed {
+		return ErrSocketClosed
+	}
 	el.cbMutex.Lock()
 	defer el.cbMutex.Unlock()
 
-	if err := unix.SetNonblock(fd, true); err != nil {
+	if err := unix.SetNonblock(socket.Fd, true); err != nil {
 		return err
 	}
 
 	// Register event with kqueue
 	ev := unix.Kevent_t{
-		Ident:  uint64(fd),
+		Ident:  uint64(socket.Fd),
 		Filter: filter,
 		Flags:  unix.EV_ADD | unix.EV_ENABLE,
 	}
@@ -97,22 +102,29 @@ func (el *EventLoop) Register(fd int, filter int16, cb EventCallback) error {
 		return err
 	}
 
-	el.callbacks[fd] = cb
+	el.callbacks[socket.Fd] = cb
 	return nil
 }
 
-func (el *EventLoop) Unregister(fd int) {
+func (el *EventLoop) Unregister(socket *Socket) error {
+	if socket.Closed {
+		return nil
+	}
 	el.cbMutex.Lock()
 	defer el.cbMutex.Unlock()
 
 	ev := unix.Kevent_t{
-		Ident:  uint64(fd),
+		Ident:  uint64(socket.Fd),
 		Filter: unix.EVFILT_READ,
 		Flags:  unix.EV_DELETE,
 	}
 	_, _ = unix.Kevent(el.kq, []unix.Kevent_t{ev}, nil, nil)
-	delete(el.callbacks, fd)
-	_ = unix.Close(fd)
+	delete(el.callbacks, socket.Fd)
+	err := socket.Close()
+	if err != nil {
+		return fmt.Errorf("socket.close: %v", err)
+	}
+	return nil
 }
 
 func (el *EventLoop) QueueTask(task Task) {
