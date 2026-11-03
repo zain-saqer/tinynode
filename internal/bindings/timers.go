@@ -1,22 +1,15 @@
-package main
+package bindings
 
 import (
 	"log"
 	"time"
 
 	v8 "rogchap.com/v8go"
+
+	"github.com/zainsaqer/simple_nodejs/internal/eventloop"
 )
 
-type TimeoutCallback struct {
-	Id        int
-	CreatedAt time.Duration
-	Timeout   time.Duration
-	Repeat    bool
-	RunAt     time.Duration
-	Callback  func() error
-}
-
-func NewSetTimeoutJsFunc(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop) *v8.Function {
+func newSetTimeoutFunc(iso *v8.Isolate, ctx *v8.Context, loop *eventloop.Loop) *v8.Function {
 	setTimeoutFunc := v8.NewFunctionTemplate(iso, func(info *v8.FunctionCallbackInfo) *v8.Value {
 		if len(info.Args()) != 2 {
 			log.Println("Timeout function expects 2 arguments")
@@ -34,9 +27,9 @@ func NewSetTimeoutJsFunc(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop)
 
 		// JS passes milliseconds; convert once here.
 		timeout := time.Duration(info.Args()[1].Integer()) * time.Millisecond
-		now := GetProcessElapsedTime()
+		now := eventloop.Now()
 
-		eventLoop.AddTimeoutCallback(&TimeoutCallback{
+		loop.AddTimer(&eventloop.Timer{
 			CreatedAt: now,
 			Timeout:   timeout,
 			RunAt:     now + timeout,

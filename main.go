@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 
 	v8 "rogchap.com/v8go"
+
+	"github.com/zainsaqer/simple_nodejs/internal/bindings"
+	"github.com/zainsaqer/simple_nodejs/internal/eventloop"
 )
 
 func main() {
@@ -27,7 +30,7 @@ func run(args []string) int {
 		return 1
 	}
 
-	eventLoop, err := NewEventLoop()
+	eventLoop, err := eventloop.New()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
@@ -38,17 +41,7 @@ func run(args []string) int {
 	ctx := v8.NewContext(iso)
 	defer ctx.Close()
 
-	global := ctx.Global()
-
-	logFunc := createLogJsFn(iso, ctx, eventLoop)
-	_ = global.Set("log", logFunc)
-
-	// Timeout
-	setTimeoutFunc := NewSetTimeoutJsFunc(iso, ctx, eventLoop)
-	_ = global.Set("setTimeout", setTimeoutFunc)
-
-	// Net
-	if _, err := InstallNetModule(iso, ctx, eventLoop); err != nil {
+	if err := bindings.Install(iso, ctx, eventLoop); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}

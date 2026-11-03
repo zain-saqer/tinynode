@@ -1,4 +1,4 @@
-package main
+package bindings
 
 import v8 "rogchap.com/v8go"
 

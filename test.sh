@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the runtime and tests it end to end:
 #   - command-line handling (no args, missing file, uncaught exception)
-#   - test.js: talks to its echo server over TCP and checks that the process
+#   - testdata/test.js: talks to its echo server over TCP and checks that the process
 #     exits on its own after the server closes (about 30 seconds).
 set -euo pipefail
 
@@ -62,8 +62,8 @@ expect_eq "exception in a callback exits with 1" "$status" "1"
 if grep -q "timer boom" "$tmp/err.txt"; then pass "exception in a callback is printed"; else fail "exception in a callback is printed"; fi
 if grep -q "late" "$tmp/out.txt"; then fail "loop stops after a callback exception"; else pass "loop stops after a callback exception"; fi
 
-echo "test.js:"
-"$bin" test.js >"$tmp/out.txt" 2>&1 &
+echo "testdata/test.js:"
+"$bin" testdata/test.js >"$tmp/out.txt" 2>&1 &
 pid=$!
 
 # Wait for the server to report it is listening.

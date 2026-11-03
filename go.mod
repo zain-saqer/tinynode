@@ -1,4 +1,4 @@
-module simple_node.js
+module github.com/zainsaqer/simple_nodejs
 
 go 1.27.0
 
