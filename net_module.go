@@ -53,7 +53,7 @@ func ListenTCP(el *EventLoop, address string, onConnection func(socket *Socket))
 			_ = unix.Close(fd)
 		}
 	}()
-	server = &Server{Socket: &Socket{Fd: fd}}
+	server = &Server{Socket: NewSocket(el, fd)}
 
 	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
 		return nil, err
@@ -71,13 +71,19 @@ func ListenTCP(el *EventLoop, address string, onConnection func(socket *Socket))
 	if err := unix.Listen(fd, 128); err != nil {
 		return nil, err
 	}
-	socket := &Socket{Fd: fd}
-	err = el.Register(socket, unix.EVFILT_READ, func(serverFd int, filter int16) {
+
+	err = el.Register(server.Socket, unix.EVFILT_READ, func(serverFd int, filter int16) {
 		nfd, _, err := unix.Accept(serverFd)
 		if err != nil {
 			return
 		}
-		clientSocket := &Socket{Fd: nfd}
+		if err := unix.SetNonblock(nfd, true); err != nil {
+			// A blocking fd would stall the whole loop on write, so refuse it.
+			fmt.Printf("accept: set non-blocking: %v\n", err)
+			_ = unix.Close(nfd)
+			return
+		}
+		clientSocket := NewSocket(el, nfd)
 		onConnection(clientSocket)
 	})
 	if err != nil {
@@ -87,7 +93,7 @@ func ListenTCP(el *EventLoop, address string, onConnection func(socket *Socket))
 	return server, nil
 }
 
-func registerClientReadHandler(el *EventLoop, socket *Socket, callback func(data []byte)) error {
+func registerClientReadHandler(el *EventLoop, socket *Socket) error {
 	err := el.Register(socket, unix.EVFILT_READ, func(fd int, filter int16) {
 		var buf [4096]byte
 		n, err := unix.Read(fd, buf[:])
@@ -103,12 +109,12 @@ func registerClientReadHandler(el *EventLoop, socket *Socket, callback func(data
 			el.Unregister(socket)
 			return
 		}
-		if callback != nil {
-			callback(buf[:n])
+		if socket.OnData != nil {
+			socket.OnData(buf[:n])
 		}
 	})
 	if err != nil {
-		_ = socket.Close()
+		_ = el.Unregister(socket)
 	}
 	return err
 }
@@ -136,6 +142,10 @@ func createServerJsFunc(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop) 
 
 		address := args[0].String()
 		server, err := ListenTCP(eventLoop, address, func(socket *Socket) {
+			if err := registerClientReadHandler(eventLoop, socket); err != nil {
+				fmt.Printf("failed to watch client socket: %v\n", err)
+				return
+			}
 			jsSocket, err := newSocketObject(iso, ctx, eventLoop, socket)
 			if err != nil {
 				fmt.Printf("failed to create socket object: %v\n", err)
@@ -147,7 +157,7 @@ func createServerJsFunc(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop) 
 			}
 		})
 		if err != nil {
-			fmt.Printf("createServer failed: %v\n", err)
+			return throwJsError(iso, ctx, fmt.Sprintf("createServer: %v", err))
 		}
 		jsServer, err := newServerObject(iso, ctx, eventLoop, server)
 		if err != nil {
@@ -176,34 +186,24 @@ func newServerObject(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop, ser
 
 // newSocketObject builds the JS `socket` object handed to the createServer callback.
 func newSocketObject(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop, clientSocket *Socket) (*v8.Object, error) {
-	// socket.write(data)
 	writeFn := v8.NewFunctionTemplate(iso, func(info *v8.FunctionCallbackInfo) *v8.Value {
 		if clientSocket.Closed {
 			return throwJsError(iso, ctx, "socket is closed")
 		}
 		args := info.Args()
-		if len(args) < 1 {
-			return nil
-		}
-		if !args[0].IsString() {
+		if len(args) < 1 || !args[0].IsString() {
 			return throwJsError(iso, ctx, "socket.write: invalid arguments")
 		}
-		n, err := unix.Write(clientSocket.Fd, []byte(args[0].String()))
-		if err != nil {
-			return throwJsError(iso, ctx, err.Error())
+		if err := clientSocket.Write([]byte(args[0].String())); err != nil {
+			return throwJsError(iso, ctx, fmt.Sprintf("socket.write: %v", err))
 		}
-		value, err := v8.NewValue(iso, n)
-		if err != nil {
-			return throwJsError(iso, ctx, err.Error())
-		}
-		return value
+		// Like Node: true if everything was handed to the kernel, false if some is queued.
+		flushed, _ := v8.NewValue(iso, len(clientSocket.outBuf) == 0)
+		return flushed
 	})
 
 	// socket.onData((data) => {...})
 	onDataFn := v8.NewFunctionTemplate(iso, func(info *v8.FunctionCallbackInfo) *v8.Value {
-		if clientSocket.Closed {
-			return nil
-		}
 		args := info.Args()
 		if len(args) < 1 || !args[0].IsFunction() {
 			return throwJsError(iso, ctx, "socket.onData: invalid arguments")
@@ -212,7 +212,7 @@ func newSocketObject(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop, cli
 		if err != nil {
 			return throwJsError(iso, ctx, fmt.Sprintf("socket.onData: %v", err))
 		}
-		err = registerClientReadHandler(eventLoop, clientSocket, func(data []byte) {
+		clientSocket.OnData = func(data []byte) {
 			chunk, err := v8.NewValue(iso, string(data))
 			if err != nil {
 				return
@@ -222,22 +222,23 @@ func newSocketObject(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop, cli
 				fmt.Println("Failed to call onData callback", err)
 				return
 			}
-		})
-		if err != nil {
-			return throwJsError(iso, ctx, fmt.Sprintf("socket.onData: %v", err))
 		}
 		return nil
 	})
 
 	// socket.close()
 	closeFn := v8.NewFunctionTemplate(iso, func(info *v8.FunctionCallbackInfo) *v8.Value {
-		err := eventLoop.Unregister(clientSocket)
+		err := clientSocket.Close()
 		if err != nil {
 			return throwJsError(iso, ctx, fmt.Sprintf("socket.close: %v", err))
 		}
 		return nil
 	})
-
+	// socket.isClosed()
+	isClosedFn := v8.NewFunctionTemplate(iso, func(info *v8.FunctionCallbackInfo) *v8.Value {
+		v, _ := v8.NewValue(iso, clientSocket.Closed || clientSocket.ClosedWhenDrained)
+		return v
+	})
 	socketTemplate := v8.NewObjectTemplate(iso)
 	if err := socketTemplate.Set("write", writeFn); err != nil {
 		return nil, err
@@ -246,6 +247,9 @@ func newSocketObject(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop, cli
 		return nil, err
 	}
 	if err := socketTemplate.Set("close", closeFn); err != nil {
+		return nil, err
+	}
+	if err := socketTemplate.Set("isClosed", isClosedFn); err != nil {
 		return nil, err
 	}
 	return socketTemplate.NewInstance(ctx)
