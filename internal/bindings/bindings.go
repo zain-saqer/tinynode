@@ -5,7 +5,7 @@ package bindings
 import (
 	v8 "rogchap.com/v8go"
 
-	"github.com/zainsaqer/simple_nodejs/internal/eventloop"
+	"github.com/zainsaqer/tinynode/internal/eventloop"
 )
 
 // Install defines the runtime's globals in ctx. Their callbacks run on loop.

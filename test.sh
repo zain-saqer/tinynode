@@ -35,8 +35,8 @@ expect_log() {
 }
 
 echo "Building..."
-go build -o "$tmp/simple_node" .
-bin="$tmp/simple_node"
+go build -o "$tmp/tinynode" .
+bin="$tmp/tinynode"
 
 echo "Command line:"
 status=0

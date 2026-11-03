@@ -6,7 +6,7 @@ import (
 
 	v8 "rogchap.com/v8go"
 
-	"github.com/zainsaqer/simple_nodejs/internal/eventloop"
+	"github.com/zainsaqer/tinynode/internal/eventloop"
 )
 
 func newSetTimeoutFunc(iso *v8.Isolate, ctx *v8.Context, loop *eventloop.Loop) *v8.Function {

@@ -5,8 +5,8 @@ import (
 
 	v8 "rogchap.com/v8go"
 
-	"github.com/zainsaqer/simple_nodejs/internal/eventloop"
-	"github.com/zainsaqer/simple_nodejs/internal/netio"
+	"github.com/zainsaqer/tinynode/internal/eventloop"
+	"github.com/zainsaqer/tinynode/internal/netio"
 )
 
 // installNet defines the global `net` object.

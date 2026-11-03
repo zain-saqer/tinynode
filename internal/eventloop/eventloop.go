@@ -117,7 +117,7 @@ func (l *Loop) isAlive() bool {
 // Run processes timers and I/O until nothing is left to wait for. It stops early
 // and returns the error if a callback fails, such as an uncaught JS exception.
 func (l *Loop) Run() error {
-	fmt.Printf("💚 Node.go Event Loop (%s) started...\n", pollerName)
+	fmt.Printf("💚 tinynode event loop (%s) started...\n", pollerName)
 
 	for l.isAlive() {
 		now := Now()
