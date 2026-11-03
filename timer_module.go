@@ -13,7 +13,7 @@ type TimeoutCallback struct {
 	Timeout   time.Duration
 	Repeat    bool
 	RunAt     time.Duration
-	Callback  func()
+	Callback  func() error
 }
 
 func NewSetTimeoutJsFunc(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop) *v8.Function {
@@ -41,10 +41,9 @@ func NewSetTimeoutJsFunc(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop)
 			Timeout:   timeout,
 			RunAt:     now + timeout,
 			Repeat:    false,
-			Callback: func() {
-				if _, err := callback.Call(ctx.Global()); err != nil {
-					log.Printf("Error running timeout callback: %v", err)
-				}
+			Callback: func() error {
+				_, err := callback.Call(ctx.Global())
+				return err
 			},
 		})
 		return nil

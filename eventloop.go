@@ -25,7 +25,8 @@ func (h *TimeoutHeap) Pop() any {
 	return x
 }
 
-type EventCallback func(fd int, filter int16)
+// EventCallback handles a kqueue event. A non-nil error stops the loop; Run returns it.
+type EventCallback func(fd int, filter int16) error
 type Task func()
 
 type EventLoop struct {
@@ -63,10 +64,11 @@ func NewEventLoop() (*EventLoop, error) {
 	}
 	heap.Init(&el.TimeoutCallbacks)
 	// Register the pipe's read end with kqueue
-	err = el.Register(NewSocket(el, readFd), unix.EVFILT_READ, func(fd int, filter int16) {
+	err = el.Register(NewSocket(el, readFd), unix.EVFILT_READ, func(fd int, filter int16) error {
 		var buf [8]byte
 		_, _ = unix.Read(fd, buf[:]) // Clear the pipe notification
 		el.executePendingTasks()
+		return nil
 	})
 	if err != nil {
 		unix.Close(kq)
@@ -182,7 +184,9 @@ func (el *EventLoop) isAlive() bool {
 	return el.TimeoutCallbacks.Len() > 0 || len(el.callbacks)-1 > 0
 }
 
-func (el *EventLoop) Run() {
+// Run processes timers and I/O until nothing is left to wait for. It stops early
+// and returns the error if a callback fails, such as an uncaught JS exception.
+func (el *EventLoop) Run() error {
 	events := make([]unix.Kevent_t, 64)
 	fmt.Println("💚 Node.go Event Loop (kqueue/macOS) started...")
 
@@ -193,7 +197,9 @@ func (el *EventLoop) Run() {
 			timerCB := el.TimeoutCallbacks[0]
 			if timerCB.RunAt <= now {
 				heap.Pop(&el.TimeoutCallbacks)
-				timerCB.Callback()
+				if err := timerCB.Callback(); err != nil {
+					return err
+				}
 				if timerCB.Repeat {
 					timerCB.RunAt += timerCB.Timeout
 					heap.Push(&el.TimeoutCallbacks, timerCB)
@@ -222,8 +228,7 @@ func (el *EventLoop) Run() {
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}
-			fmt.Printf("Kevent critical error: %v\n", err)
-			break
+			return fmt.Errorf("kevent: %w", err)
 		}
 
 		for i := range n {
@@ -235,8 +240,11 @@ func (el *EventLoop) Run() {
 			el.cbMutex.RUnlock()
 
 			if exists {
-				cb(fd, filter)
+				if err := cb(fd, filter); err != nil {
+					return err
+				}
 			}
 		}
 	}
+	return nil
 }

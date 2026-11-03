@@ -43,7 +43,7 @@ func parseSockAddrInet4(addrStr string) (*unix.SockaddrInet4, error) {
 	return sa, nil
 }
 
-func ListenTCP(el *EventLoop, address string, onConnection func(socket *Socket)) (server *Server, err error) {
+func ListenTCP(el *EventLoop, address string, onConnection func(socket *Socket) error) (server *Server, err error) {
 	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
 	if err != nil {
 		return nil, err
@@ -72,19 +72,19 @@ func ListenTCP(el *EventLoop, address string, onConnection func(socket *Socket))
 		return nil, err
 	}
 
-	err = el.Register(server.Socket, unix.EVFILT_READ, func(serverFd int, filter int16) {
+	err = el.Register(server.Socket, unix.EVFILT_READ, func(serverFd int, filter int16) error {
 		nfd, _, err := unix.Accept(serverFd)
 		if err != nil {
-			return
+			return nil
 		}
 		if err := unix.SetNonblock(nfd, true); err != nil {
 			// A blocking fd would stall the whole loop on write, so refuse it.
 			fmt.Printf("accept: set non-blocking: %v\n", err)
 			_ = unix.Close(nfd)
-			return
+			return nil
 		}
 		clientSocket := NewSocket(el, nfd)
-		onConnection(clientSocket)
+		return onConnection(clientSocket)
 	})
 	if err != nil {
 		return nil, err
@@ -94,24 +94,25 @@ func ListenTCP(el *EventLoop, address string, onConnection func(socket *Socket))
 }
 
 func registerClientReadHandler(el *EventLoop, socket *Socket) error {
-	err := el.Register(socket, unix.EVFILT_READ, func(fd int, filter int16) {
+	err := el.Register(socket, unix.EVFILT_READ, func(fd int, filter int16) error {
 		var buf [4096]byte
 		n, err := unix.Read(fd, buf[:])
 		if err != nil {
 			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EINTR) {
-				return
+				return nil
 			}
 			el.Unregister(socket)
-			return
+			return nil
 		}
 		if n == 0 {
 			// A zero-byte read means the peer closed the connection.
 			el.Unregister(socket)
-			return
+			return nil
 		}
 		if socket.OnData != nil {
-			socket.OnData(buf[:n])
+			return socket.OnData(buf[:n])
 		}
+		return nil
 	})
 	if err != nil {
 		_ = el.Unregister(socket)
@@ -141,20 +142,20 @@ func createServerJsFunc(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop) 
 		}
 
 		address := args[0].String()
-		server, err := ListenTCP(eventLoop, address, func(socket *Socket) {
+		server, err := ListenTCP(eventLoop, address, func(socket *Socket) error {
+			// Failing to set up one connection drops it; only JS exceptions stop the process.
 			if err := registerClientReadHandler(eventLoop, socket); err != nil {
 				fmt.Printf("failed to watch client socket: %v\n", err)
-				return
+				return nil
 			}
 			jsSocket, err := newSocketObject(iso, ctx, eventLoop, socket)
 			if err != nil {
 				fmt.Printf("failed to create socket object: %v\n", err)
 				eventLoop.Unregister(socket)
-				return
+				return nil
 			}
-			if _, err := callback.Call(ctx.Global(), jsSocket); err != nil {
-				fmt.Printf("createServer callback failed: %v\n", err)
-			}
+			_, err = callback.Call(ctx.Global(), jsSocket)
+			return err
 		})
 		if err != nil {
 			return throwJsError(iso, ctx, fmt.Sprintf("createServer: %v", err))
@@ -212,16 +213,13 @@ func newSocketObject(iso *v8.Isolate, ctx *v8.Context, eventLoop *EventLoop, cli
 		if err != nil {
 			return throwJsError(iso, ctx, fmt.Sprintf("socket.onData: %v", err))
 		}
-		clientSocket.OnData = func(data []byte) {
+		clientSocket.OnData = func(data []byte) error {
 			chunk, err := v8.NewValue(iso, string(data))
 			if err != nil {
-				return
+				return err
 			}
 			_, err = dataCallback.Call(ctx.Global(), chunk)
-			if err != nil {
-				fmt.Println("Failed to call onData callback", err)
-				return
-			}
+			return err
 		}
 		return nil
 	})

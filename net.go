@@ -13,7 +13,7 @@ type Socket struct {
 	outBuf            []byte
 	eventLoop         *EventLoop
 	//todo: buffer data in case OnData cb is nil
-	OnData func([]byte)
+	OnData func([]byte) error
 	//todo: add OnClose and OnError callbacks
 }
 
@@ -67,11 +67,12 @@ func (s *Socket) Write(data []byte) error {
 	if n < len(data) {
 		el := s.eventLoop
 		s.outBuf = append(s.outBuf, data[n:]...)
-		err := el.Register(s, unix.EVFILT_WRITE, func(fd int, filter int16) {
+		err := el.Register(s, unix.EVFILT_WRITE, func(fd int, filter int16) error {
 			err := s.flush()
 			if err != nil || (s.ClosedWhenDrained && len(s.outBuf) == 0) {
 				_ = el.Unregister(s)
 			}
+			return nil
 		})
 		if err != nil {
 			// Can't wait for writability; the stream would be missing bytes, so drop the connection.
