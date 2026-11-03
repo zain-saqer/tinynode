@@ -6,7 +6,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/zainsaqer/tinynode/internal/eventloop"
+	"github.com/zain-saqer/tinynode/internal/eventloop"
 )
 
 var ErrSocketClosed = errors.New("socket is closed")

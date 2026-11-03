@@ -1,4 +1,4 @@
-module github.com/zainsaqer/tinynode
+module github.com/zain-saqer/tinynode
 
 go 1.27.0
 

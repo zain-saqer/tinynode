@@ -8,8 +8,8 @@ import (
 
 	v8 "rogchap.com/v8go"
 
-	"github.com/zainsaqer/tinynode/internal/bindings"
-	"github.com/zainsaqer/tinynode/internal/eventloop"
+	"github.com/zain-saqer/tinynode/internal/bindings"
+	"github.com/zain-saqer/tinynode/internal/eventloop"
 )
 
 func main() {

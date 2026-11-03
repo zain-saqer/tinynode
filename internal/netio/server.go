@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/zainsaqer/tinynode/internal/eventloop"
+	"github.com/zain-saqer/tinynode/internal/eventloop"
 )
 
 type Server struct {
