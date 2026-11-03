@@ -203,6 +203,12 @@ func (el *EventLoop) Run() {
 			}
 		}
 
+		// A timer callback may have closed the last socket; with nothing left
+		// to wait for, a nil timeout below would block forever.
+		if !el.isAlive() {
+			break
+		}
+
 		// Network epoll
 		var timeout *unix.Timespec
 		if len(el.TimeoutCallbacks) > 0 {
