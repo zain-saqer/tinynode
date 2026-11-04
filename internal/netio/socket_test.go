@@ -131,8 +131,14 @@ func TestWriteQueuesWhatTheKernelRejectsAndCloseWaitsForIt(t *testing.T) {
 
 func TestWriteAfterDestroyFails(t *testing.T) {
 	_, s, _ := newTestSocket(t)
+	if err := s.Write(pattern(1 << 20)); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Destroy(); err != nil {
 		t.Fatal(err)
+	}
+	if s.Buffered() != 0 {
+		t.Errorf("Buffered after Destroy = %d, want 0", s.Buffered())
 	}
 	if err := s.Write([]byte("x")); !errors.Is(err, ErrSocketClosed) {
 		t.Errorf("err = %v, want ErrSocketClosed", err)

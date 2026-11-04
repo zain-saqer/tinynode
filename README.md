@@ -28,7 +28,7 @@ I built this project to learn how the Node.js event loop works and to get better
 |---|---|
 | `log(...args)` | Prints its arguments, like `console.log`. |
 | `setTimeout(fn, ms)` | Runs `fn` once after `ms` milliseconds. |
-| `net.createServer(address, onConnection)` | Listens on an IPv4 `"host:port"` and calls `onConnection(socket)` for each client. Returns a server with `close()`. Throws on a bad address. |
+| `net.createServer(address, onConnection)` | Listens on an IPv4 `"host:port"` (`"localhost"` and an empty host for all interfaces also work) and calls `onConnection(socket)` for each client. Returns a server with `close()` and `address()`. Throws on a bad address. |
 | `socket.write(string)` | Sends data. Returns `false` if some of it had to be queued, like Node. |
 | `socket.onData(fn)` | Calls `fn(chunk)` for each chunk received. |
 | `socket.close()` | Sends any queued data, then closes. Writing after `close()` throws. |

@@ -48,6 +48,7 @@ func (s *Socket) Destroy() error {
 	s.loop.Unregister(s.Fd)
 	err := unix.Close(s.Fd)
 	s.Closed = true
+	s.outBuf = nil
 	return err
 }
 

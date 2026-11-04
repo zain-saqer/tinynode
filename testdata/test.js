@@ -1,5 +1,5 @@
 // Demo of everything implemented so far:
-//   log, setTimeout, net.createServer, socket.onData / write / close, server.close
+//   log, setTimeout, net.createServer, socket.onData / write / close, server.close / address
 //
 // Run it, then connect from another terminal:
 //   nc 127.0.0.1 8080
@@ -45,7 +45,7 @@ const server = net.createServer("127.0.0.1:8080", (socket) => {
         }
     });
 });
-log("listening on 127.0.0.1:8080 (try: nc 127.0.0.1 8080)");
+log("listening on " + server.address() + " (try: nc 127.0.0.1 8080)");
 
 setTimeout(() => log("tick: 1 second passed"), 1000);
 

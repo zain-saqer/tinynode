@@ -74,8 +74,21 @@ func newServerObject(iso *v8.Isolate, ctx *v8.Context, server *netio.Server) (*v
 		return nil
 	})
 
+	// server.address() returns the "host:port" being listened on.
+	addressFn := v8.NewFunctionTemplate(iso, func(info *v8.FunctionCallbackInfo) *v8.Value {
+		addr, err := server.Addr()
+		if err != nil {
+			return throwJsError(iso, ctx, fmt.Sprintf("server.address: %v", err))
+		}
+		v, _ := v8.NewValue(iso, addr)
+		return v
+	})
+
 	serverTemplate := v8.NewObjectTemplate(iso)
 	if err := serverTemplate.Set("close", closeFn); err != nil {
+		return nil, err
+	}
+	if err := serverTemplate.Set("address", addressFn); err != nil {
 		return nil, err
 	}
 	return serverTemplate.NewInstance(ctx)

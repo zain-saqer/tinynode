@@ -11,13 +11,29 @@ import (
 )
 
 type Server struct {
-	Closed bool
 	Socket *Socket
 }
 
 // Close stops listening. Connections already accepted stay open.
 func (s *Server) Close() error {
 	return s.Socket.Destroy()
+}
+
+// Addr returns the "host:port" the server listens on, with the real port when
+// it was started on port 0.
+func (s *Server) Addr() (string, error) {
+	if s.Socket.Closed {
+		return "", ErrSocketClosed
+	}
+	sa, err := unix.Getsockname(s.Socket.Fd)
+	if err != nil {
+		return "", err
+	}
+	in4, ok := sa.(*unix.SockaddrInet4)
+	if !ok {
+		return "", fmt.Errorf("unexpected address type %T", sa)
+	}
+	return net.JoinHostPort(net.IP(in4.Addr[:]).String(), strconv.Itoa(in4.Port)), nil
 }
 
 func parseSockAddrInet4(addrStr string) (*unix.SockaddrInet4, error) {
@@ -33,7 +49,15 @@ func parseSockAddrInet4(addrStr string) (*unix.SockaddrInet4, error) {
 		return nil, fmt.Errorf("invalid port number: %s", portStr)
 	}
 
-	// 3. Parse and ensure it's a valid IPv4 address
+	// 3. Parse and ensure it's a valid IPv4 address. Like node, an empty host
+	// means every interface. Other names would need a DNS lookup, which would
+	// block the loop, so only "localhost" is accepted.
+	switch host {
+	case "":
+		host = "0.0.0.0"
+	case "localhost":
+		host = "127.0.0.1"
+	}
 	ip := net.ParseIP(host)
 	if ip == nil {
 		return nil, fmt.Errorf("invalid IP address: %s", host)
