@@ -51,6 +51,15 @@ func newPoller() (*poller, error) {
 	return p, nil
 }
 
+// close releases the kqueue and the wake pipe.
+func (p *poller) close() error {
+	return errors.Join(
+		unix.Close(p.kq),
+		unix.Close(p.wakeReadFd),
+		unix.Close(p.wakeWriteFd),
+	)
+}
+
 func kqueueFilter(interest Interest) int16 {
 	switch interest {
 	case Readable:

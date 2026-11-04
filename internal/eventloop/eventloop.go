@@ -43,6 +43,12 @@ func New() (*Loop, error) {
 	}, nil
 }
 
+// Close releases the loop's own fds. Call it once Run has returned; fds passed
+// to Register still belong to the caller.
+func (l *Loop) Close() error {
+	return l.poller.close()
+}
+
 // Register makes fd non-blocking and calls cb whenever it is ready for interest.
 func (l *Loop) Register(fd int, interest Interest, cb Callback) error {
 	l.cbMutex.Lock()

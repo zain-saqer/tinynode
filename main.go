@@ -35,6 +35,8 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
+	defer eventLoop.Close()
+
 	iso := v8.NewIsolate()
 	defer iso.Dispose()
 
