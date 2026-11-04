@@ -27,7 +27,7 @@ func newSetTimeoutFunc(iso *v8.Isolate, ctx *v8.Context, loop *eventloop.Loop) *
 
 		// JS passes milliseconds; convert once here.
 		timeout := time.Duration(info.Args()[1].Integer()) * time.Millisecond
-		now := eventloop.Now()
+		now := loop.Now()
 
 		loop.AddTimer(&eventloop.Timer{
 			CreatedAt: now,

@@ -4,7 +4,6 @@
 package eventloop
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -24,6 +23,7 @@ type Callback func(fd int, interest Interest) error
 type Task func()
 
 type Loop struct {
+	now         func() time.Duration // the clock timers run on; tests replace it
 	poller      *poller
 	timers      timerHeap
 	callbacks   map[int]map[Interest]Callback
@@ -38,9 +38,15 @@ func New() (*Loop, error) {
 		return nil, err
 	}
 	return &Loop{
+		now:       sinceStart,
 		poller:    p,
 		callbacks: make(map[int]map[Interest]Callback),
 	}, nil
+}
+
+// Now returns the loop's current time. Timer.RunAt is measured on this clock.
+func (l *Loop) Now() time.Duration {
+	return l.now()
 }
 
 // Close releases the loop's own fds. Call it once Run has returned; fds passed
@@ -123,10 +129,8 @@ func (l *Loop) isAlive() bool {
 // Run processes timers and I/O until nothing is left to wait for. It stops early
 // and returns the error if a callback fails, such as an uncaught JS exception.
 func (l *Loop) Run() error {
-	fmt.Printf("💚 tinynode event loop (%s) started...\n", pollerName)
-
 	for l.isAlive() {
-		now := Now()
+		now := l.Now()
 		if err := l.runDueTimers(now); err != nil {
 			return err
 		}

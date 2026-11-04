@@ -54,6 +54,8 @@ func run(args []string) int {
 		return 1
 	}
 
+	fmt.Printf("💚 tinynode event loop started...\n")
+
 	// An exception thrown in a callback (setTimeout, onData, ...) is uncaught: stop like node does.
 	if err := eventLoop.Run(); err != nil {
 		printJsError(err)

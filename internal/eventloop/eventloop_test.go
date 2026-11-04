@@ -121,7 +121,7 @@ func TestRunReturnsWhenNothingIsLeft(t *testing.T) {
 func TestRunWaitsForTimer(t *testing.T) {
 	l := newTestLoop(t)
 	fired := false
-	start := Now()
+	start := l.Now()
 	l.AddTimer(&Timer{RunAt: start + 20*time.Millisecond, Callback: func() error {
 		fired = true
 		return nil
@@ -133,8 +133,26 @@ func TestRunWaitsForTimer(t *testing.T) {
 	if !fired {
 		t.Fatal("timer did not fire")
 	}
-	if elapsed := Now() - start; elapsed < 20*time.Millisecond {
+	if elapsed := l.Now() - start; elapsed < 20*time.Millisecond {
 		t.Errorf("timer fired after %v, want at least 20ms", elapsed)
+	}
+}
+
+func TestRunUsesTheLoopClock(t *testing.T) {
+	l := newTestLoop(t)
+	l.now = func() time.Duration { return time.Hour }
+	fired := false
+	l.AddTimer(&Timer{RunAt: time.Hour, Callback: func() error {
+		fired = true
+		return nil
+	}})
+
+	// The timer is due on the fake clock, so Run fires it without waiting an hour.
+	if err := runWithTimeout(t, l); err != nil {
+		t.Fatal(err)
+	}
+	if !fired {
+		t.Fatal("timer did not fire")
 	}
 }
 

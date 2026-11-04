@@ -8,8 +8,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const pollerName = "kqueue/macOS"
-
 // poller waits for fd readiness with kqueue.
 type poller struct {
 	kq          int

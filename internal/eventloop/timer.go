@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Timer runs Callback once Now() reaches RunAt, and every Timeout after that if Repeat is set.
+// Timer runs Callback once Loop.Now reaches RunAt, and every Timeout after that if Repeat is set.
 type Timer struct {
 	ID        int
 	CreatedAt time.Duration
