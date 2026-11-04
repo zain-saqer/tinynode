@@ -43,7 +43,7 @@ func run(args []string) int {
 	ctx := v8.NewContext(iso)
 	defer ctx.Close()
 
-	if err := bindings.Install(iso, ctx, eventLoop); err != nil {
+	if err := bindings.Install(iso, ctx, eventLoop, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}

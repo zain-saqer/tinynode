@@ -2,6 +2,7 @@ package bindings
 
 import (
 	"fmt"
+	"io"
 
 	v8 "rogchap.com/v8go"
 
@@ -10,44 +11,34 @@ import (
 )
 
 // installNet defines the global `net` object.
-func installNet(iso *v8.Isolate, ctx *v8.Context, loop *eventloop.Loop) error {
+func installNet(iso *v8.Isolate, ctx *v8.Context, loop *eventloop.Loop, stderr io.Writer) error {
 	obj, err := v8.NewObjectTemplate(iso).NewInstance(ctx)
 	if err != nil {
 		return err
 	}
-	if err := obj.Set("createServer", newCreateServerFunc(iso, ctx, loop)); err != nil {
+	if err := obj.Set("createServer", newCreateServerFunc(iso, ctx, loop, stderr)); err != nil {
 		return err
 	}
 	return ctx.Global().Set("net", obj)
 }
 
 // newCreateServerFunc builds net.createServer(address, (socket) => {...}).
-func newCreateServerFunc(iso *v8.Isolate, ctx *v8.Context, loop *eventloop.Loop) *v8.Function {
+func newCreateServerFunc(iso *v8.Isolate, ctx *v8.Context, loop *eventloop.Loop, stderr io.Writer) *v8.Function {
 	createServerFunc := v8.NewFunctionTemplate(iso, func(info *v8.FunctionCallbackInfo) *v8.Value {
 		args := info.Args()
-		if len(args) < 2 {
-			fmt.Println("Invalid arguments for createServer")
-			return nil
+		if len(args) < 1 || !args[0].IsString() {
+			return throwJsTypeError(iso, ctx, `The "address" argument must be of type string`)
 		}
-		if !args[0].IsString() {
-			fmt.Println("Invalid arguments for createServer")
-			return nil
+		if len(args) < 2 || !args[1].IsFunction() {
+			return throwJsTypeError(iso, ctx, `The "onConnection" argument must be of type function`)
 		}
-		if !args[1].IsFunction() {
-			fmt.Println("Invalid arguments for createServer")
-			return nil
-		}
-		callback, err := args[1].AsFunction()
-		if err != nil {
-			fmt.Println("Invalid arguments for createServer")
-			return nil
-		}
+		callback, _ := args[1].AsFunction()
 
 		address := args[0].String()
 		server, err := netio.ListenTCP(loop, address, func(socket *netio.Socket) error {
 			jsSocket, err := newSocketObject(iso, ctx, socket)
 			if err != nil {
-				fmt.Printf("failed to create socket object: %v\n", err)
+				fmt.Fprintf(stderr, "failed to create socket object: %v\n", err)
 				_ = socket.Destroy()
 				return nil
 			}
