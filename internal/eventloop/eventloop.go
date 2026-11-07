@@ -141,6 +141,7 @@ func (l *Loop) Run() error {
 			break
 		}
 
+		now = l.Now()
 		timeout := time.Duration(-1) // wait until an fd is ready
 		if l.timers.Len() > 0 {
 			timeout = max(l.timers[0].RunAt-now, 0)
