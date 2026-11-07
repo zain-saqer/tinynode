@@ -156,6 +156,33 @@ func TestRunUsesTheLoopClock(t *testing.T) {
 	}
 }
 
+// A timer set from inside a slow callback must wait its own timeout, not that
+// timeout plus however long the callback ran.
+func TestRunTimeoutIgnoresTimeSpentInCallbacks(t *testing.T) {
+	l := newTestLoop(t)
+	// Real time plus an offset, so a callback can "take" an hour by bumping it.
+	var offset time.Duration
+	l.now = func() time.Duration { return sinceStart() + offset }
+
+	fired := false
+	l.AddTimer(&Timer{RunAt: l.Now(), Callback: func() error {
+		offset += time.Hour // the slow callback
+		l.AddTimer(&Timer{RunAt: l.Now() + 10*time.Millisecond, Callback: func() error {
+			fired = true
+			return nil
+		}})
+		return nil
+	}})
+
+	// With a stale clock the loop would wait about an hour for the second timer.
+	if err := runWithTimeout(t, l); err != nil {
+		t.Fatal(err)
+	}
+	if !fired {
+		t.Fatal("timer set in the callback did not fire")
+	}
+}
+
 func TestRunDispatchesReadableFd(t *testing.T) {
 	l := newTestLoop(t)
 	r, w := newPipe(t)
