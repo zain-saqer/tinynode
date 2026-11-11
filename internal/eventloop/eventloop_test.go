@@ -1,6 +1,7 @@
 package eventloop
 
 import (
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -10,7 +11,7 @@ func newLoop(t *testing.T) *Loop {
 	t.Helper()
 	loop, err := New()
 	if err != nil {
-		t.Fatal("expected nil error")
+		t.Fatal(err)
 	}
 	return loop
 }
@@ -30,77 +31,37 @@ func runWithTimeout(t *testing.T, loop *Loop) error {
 	}
 }
 
-func TestRunDueTimersRunsDueTimersInOrder(t *testing.T) {
-	l := newLoop(t)
-	var events []int
-	add := func(id int, at time.Duration) {
-		l.AddTimer(&Timer{
-			ID:    id,
-			RunAt: l.Now() + at,
-			Callback: func() error {
-				events = append(events, id)
-				return nil
-			},
-		})
-	}
-	add(1, 0*time.Millisecond)
-	add(2, 10*time.Millisecond)
-	add(3, 5*time.Millisecond)
-	add(4, 0*time.Millisecond)
-
-	if err := l.runDueTimers(5 * time.Millisecond); err != nil {
-		t.Fatal("expected nil error")
-	}
-	expectedEvents := []int{1, 4, 3}
-	if slices.Equal(events, expectedEvents) {
-		t.Fatalf("expected events %v, got %v", expectedEvents, events)
-	}
-}
-
-func TestRunDueTimersReschedulesRepeatingTimer(t *testing.T) {
-
-}
-
 func TestTimeoutRunInOrder(t *testing.T) {
 	loop := newLoop(t)
-	var offset time.Duration
+	offset := time.Millisecond
 	loop.now = func() time.Duration {
 		return offset
 	}
 	runs := 0
-	events := ""
-	loop.AddTimer(&Timer{
-		ID:      1,
-		Timeout: 0,
-		RunAt:   0,
-		Repeat:  false,
-		Callback: func() error {
+	events := make([]int, 0)
+	loop.AddTimeout(time.Millisecond,
+		func() error {
 			runs++
-			events += "1"
-			offset += time.Millisecond
+			events = append(events, 1)
+			offset += 25 * time.Millisecond
 			return nil
-		},
-	})
-	loop.AddTimer(&Timer{
-		ID:      2,
-		Timeout: time.Millisecond,
-		RunAt:   time.Millisecond,
-		Repeat:  false,
-		Callback: func() error {
+		})
+	loop.AddTimeout(10*time.Millisecond,
+		func() error {
 			runs++
-			events += "2"
+			events = append(events, 2)
 			return nil
-		},
-	})
+		})
+	offset = 5 * time.Millisecond
 	err := runWithTimeout(t, loop)
 	if err != nil {
-		t.Fatal("expected nil error")
+		t.Fatal(err)
 	}
 	if runs != 2 {
-		t.Fatalf("expected 1 runs, got %d", runs)
+		t.Fatalf("expected 2 runs, got %d", runs)
 	}
-	if events != "12" {
-		t.Fatalf("expected events to be 12, got %s", events)
+	if !slices.Equal(events, []int{1, 2}) {
+		t.Fatalf("expected events to be %v, got %v", []int{1, 2}, events)
 	}
 }
 
@@ -108,24 +69,38 @@ func TestRunWaitsForTimer(t *testing.T) {
 	loop := newLoop(t)
 	fired := false
 	start := loop.Now()
-	loop.AddTimer(&Timer{
-		ID:      1,
-		Timeout: 20 * time.Millisecond,
-		RunAt:   start + 20*time.Millisecond,
-		Repeat:  false,
-		Callback: func() error {
+	loop.AddTimeout(20*time.Millisecond,
+		func() error {
 			fired = true
 			return nil
-		},
-	})
+		})
 	err := runWithTimeout(t, loop)
 	if err != nil {
-		t.Fatal("expected nil error")
+		t.Fatal(err)
 	}
 	if !fired {
 		t.Fatal("expected timer to fire")
 	}
 	if elapsed := loop.Now() - start; elapsed < 20*time.Millisecond {
-		t.Fatalf("expected elapsed time to be at least 20ms, got %d", elapsed)
+		t.Fatalf("expected elapsed time to be at least 20ms, got %v", elapsed)
+	}
+}
+
+func TestEventLoopStopsWhenTimerReturnsError(t *testing.T) {
+	loop := newLoop(t)
+	offset := time.Duration(0)
+	loop.now = func() time.Duration {
+		return offset
+	}
+	expectedError := errors.New("timer error")
+	loop.AddTimeout(time.Millisecond, func() error {
+		return expectedError
+	})
+	offset = 3 * time.Millisecond
+	if err := runWithTimeout(t, loop); !errors.Is(err, expectedError) {
+		t.Fatalf("got %v, want %v", err, expectedError)
+	}
+	if err := runWithTimeout(t, loop); !errors.Is(err, expectedError) {
+		t.Fatalf("got %v, want %v", err, expectedError)
 	}
 }
