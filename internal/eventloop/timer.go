@@ -10,6 +10,7 @@ const maxTimeout = (1<<31 - 1) * time.Millisecond
 type Timer struct {
 	// TODO: make unexport ID
 	ID       int64
+	loop     *Loop
 	schedule int64
 	index    int
 	timeout  time.Duration
@@ -38,7 +39,7 @@ func (h *timerHeap) Push(x any) {
 	n := len(*h)
 	item := x.(*Timer)
 	item.index = n
-	*h = append(*h, x.(*Timer))
+	*h = append(*h, item)
 }
 func (h *timerHeap) Pop() any {
 	old := *h
@@ -59,6 +60,7 @@ func (l *Loop) AddInterval(timeout time.Duration, callback func() error) *Timer 
 	}
 	timer := &Timer{
 		ID:       l.nextTimerID,
+		loop:     l,
 		schedule: l.nextSeq,
 		timeout:  timeout,
 		runAt:    l.Now() + timeout,
@@ -79,6 +81,7 @@ func (l *Loop) AddTimeout(timeout time.Duration, callback func() error) *Timer {
 	}
 	timer := &Timer{
 		ID:       l.nextTimerID,
+		loop:     l,
 		schedule: l.nextSeq,
 		timeout:  timeout,
 		runAt:    l.Now() + timeout,
@@ -93,7 +96,7 @@ func (l *Loop) AddTimeout(timeout time.Duration, callback func() error) *Timer {
 }
 
 func (l *Loop) CancelTimer(timer *Timer) {
-	if timer.canceled {
+	if timer == nil || timer.loop != l || timer.canceled {
 		return
 	}
 	timer.canceled = true
