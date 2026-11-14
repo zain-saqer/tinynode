@@ -17,19 +17,19 @@ func TestAddTimeoutMaxBoundary(t *testing.T) {
 	}
 	// max timeout
 	timeout := (1<<31 - 1) * time.Millisecond
-	timer := l.AddTimeout(timeout, func() error {
+	h1 := l.AddTimeout(timeout, func() error {
 		return nil
 	})
-	if timer.timeout != timeout {
-		t.Fatalf("expected timeout %v, got %v", timeout, timer.timeout)
+	if h1.t.timeout != timeout {
+		t.Fatalf("expected timeout %v, got %v", timeout, h1.t.timeout)
 	}
 	// 1 ms above the timeout clamps to 1 ms
 	timeout2 := (1 << 31) * time.Millisecond
-	timer2 := l.AddTimeout(timeout2, func() error {
+	h2 := l.AddTimeout(timeout2, func() error {
 		return nil
 	})
-	if timer2.timeout != time.Millisecond {
-		t.Fatalf("expected timeout %v, got %v", time.Millisecond, timer2.timeout)
+	if h2.t.timeout != time.Millisecond {
+		t.Fatalf("expected timeout %v, got %v", time.Millisecond, h2.t.timeout)
 	}
 }
 
@@ -134,12 +134,12 @@ func TestAddTimeoutHugeTimeoutDoesNotOverflow(t *testing.T) {
 		return 0
 	}
 	runs := 0
-	timeout := l.AddTimeout(math.MaxInt64, func() error {
+	h := l.AddTimeout(math.MaxInt64, func() error {
 		runs++
 		return nil
 	})
-	if timeout.timeout != time.Millisecond {
-		t.Fatalf("expected timeout to be %v, got %v", time.Millisecond, timeout.timeout)
+	if h.t.timeout != time.Millisecond {
+		t.Fatalf("expected timeout to be %v, got %v", time.Millisecond, h.t.timeout)
 	}
 	if err := l.runDueTimers(time.Millisecond); err != nil {
 		t.Fatal(err)
@@ -289,40 +289,40 @@ func TestRunDueTimersStopsWhenTimerReturnsError(t *testing.T) {
 // timer from another loop), even when the timer's index doesn't fit this
 // loop's heap. Nothing is removed and nothing panics.
 func TestCancelTimerNoOpOnInvalidTimers(t *testing.T) {
-	assertOnlyTimer := func(t *testing.T, loop *Loop, timer *Timer) {
+	assertOnlyTimer := func(t *testing.T, loop *Loop, tm *timer) {
 		t.Helper()
 		if len(loop.timers) != 1 {
 			t.Fatalf("expected length of timers to be 1, got %d", len(loop.timers))
 		}
-		if loop.timers[0] != timer {
+		if loop.timers[0] != tm {
 			t.Fatalf("expected existing timer to still be in timers, got %v", loop.timers)
 		}
 	}
 	t.Run("nil", func(t *testing.T) {
 		loop := newLoop(t)
 		loop.now = func() time.Duration { return 0 }
-		timer1 := loop.AddTimeout(time.Millisecond, func() error { return nil })
+		h := loop.AddTimeout(time.Millisecond, func() error { return nil })
 		loop.CancelTimer(nil)
-		assertOnlyTimer(t, loop, timer1)
+		assertOnlyTimer(t, loop, h.t)
 	})
-	t.Run("zero timer", func(t *testing.T) {
+	t.Run("no *timer inside", func(t *testing.T) {
 		loop := newLoop(t)
 		loop.now = func() time.Duration { return 0 }
-		timer1 := loop.AddTimeout(time.Millisecond, func() error { return nil })
+		h := loop.AddTimeout(time.Millisecond, func() error { return nil })
 		loop.CancelTimer(&Timer{})
-		assertOnlyTimer(t, loop, timer1)
+		assertOnlyTimer(t, loop, h.t)
 	})
-	t.Run("other loop timer", func(t *testing.T) {
+	t.Run("other loop Timer", func(t *testing.T) {
 		loop := newLoop(t)
 		loop.now = func() time.Duration { return 0 }
-		timer1 := loop.AddTimeout(time.Millisecond, func() error { return nil })
+		h1 := loop.AddTimeout(time.Millisecond, func() error { return nil })
 		loop2 := newLoop(t)
-		timer2 := loop2.AddTimeout(time.Millisecond, func() error { return nil })
-		loop.CancelTimer(timer2)
-		assertOnlyTimer(t, loop, timer1)
+		h2 := loop2.AddTimeout(time.Millisecond, func() error { return nil })
+		loop.CancelTimer(h2)
+		assertOnlyTimer(t, loop, h1.t)
 	})
 
-	t.Run("zero timer on empty loop", func(t *testing.T) {
+	t.Run("zero Timer on empty loop", func(t *testing.T) {
 		loop := newLoop(t)
 		loop.now = func() time.Duration { return 0 }
 		loop.CancelTimer(&Timer{})
@@ -331,18 +331,18 @@ func TestCancelTimerNoOpOnInvalidTimers(t *testing.T) {
 		}
 	})
 
-	t.Run("other loop timer past heap end", func(t *testing.T) {
+	t.Run("other loop Timer past heap end", func(t *testing.T) {
 		loop := newLoop(t)
 		loop.now = func() time.Duration { return 0 }
-		timer1 := loop.AddTimeout(time.Millisecond, func() error { return nil })
+		h := loop.AddTimeout(time.Millisecond, func() error { return nil })
 		loop2 := newLoop(t)
 		loop2.now = func() time.Duration { return 0 }
-		loop2.CancelTimer(timer1)
+		loop2.CancelTimer(h)
 		if len(loop2.timers) != 0 {
 			t.Fatalf("expected length of timers to be 0, got %d", len(loop2.timers))
 		}
-		assertOnlyTimer(t, loop, timer1)
-		if timer1.canceled {
+		assertOnlyTimer(t, loop, h.t)
+		if h.t.canceled {
 			t.Fatalf("expected timer not to be canceled")
 		}
 	})
@@ -376,12 +376,12 @@ func TestCancelTimerDoesNotChangeOtherLoopTimers(t *testing.T) {
 	if len(loop1.timers) != 1 {
 		t.Fatalf("expected length of timers to be 1, got %d", len(loop1.timers))
 	}
-	if loop1.timers[0] != intervalA {
+	if loop1.timers[0] != intervalA.t {
 		t.Fatalf("expected existing timer to still be in timers, got %v", loop1.timers)
 	}
 }
 
-// A timer cancelled before its deadline never runs, and the loop is no
+// A timer canceled before its deadline never runs, and the loop is no
 // longer alive because of it.
 func TestCancelTimerBeforeItFires(t *testing.T) {
 	l := newLoop(t)
@@ -413,10 +413,10 @@ func TestCancelTimerFromOwnCallback(t *testing.T) {
 		return offset
 	}
 	runs := 0
-	var timer *Timer
-	timer = l.AddInterval(time.Millisecond, func() error {
+	var h *Timer
+	h = l.AddInterval(time.Millisecond, func() error {
 		runs++
-		l.CancelTimer(timer)
+		l.CancelTimer(h)
 		offset += time.Millisecond
 		return nil
 	})
@@ -490,11 +490,11 @@ func TestCancelTimerAfterItFired(t *testing.T) {
 		return offset
 	}
 	runs := 0
-	timer := l.AddTimeout(1*time.Millisecond, func() error {
+	h1 := l.AddTimeout(1*time.Millisecond, func() error {
 		runs++
 		return nil
 	})
-	timer2 := l.AddTimeout(2*time.Millisecond, func() error {
+	h2 := l.AddTimeout(2*time.Millisecond, func() error {
 		runs++
 		return nil
 	})
@@ -504,12 +504,73 @@ func TestCancelTimerAfterItFired(t *testing.T) {
 	if runs != 1 {
 		t.Fatalf("expected runs to be 1, got %d", runs)
 	}
-	l.CancelTimer(timer)
+	l.CancelTimer(h1)
 	if len(l.timers) != 1 {
 		t.Fatalf("expected one timer left in the heap")
 	}
-	if l.timers[0].ID != timer2.ID {
+	if l.timers[0].id != h2.t.id {
 		t.Fatalf("expected timer2 to be the only timer left in the heap")
+	}
+}
+
+// Cancelling a copy of a Timer (cp := *timer) cancels the same timer, even
+// after the heap has reordered since the copy was made, and leaves the other
+// timers alone.
+func TestCancelTimerCopyCancelsSameTimer(t *testing.T) {
+	l := newLoop(t)
+	l.now = func() time.Duration {
+		return 0
+	}
+	aRan := false
+	bRan := false
+	a := l.AddTimeout(20*time.Millisecond, func() error { aRan = true; return nil })
+	cp := *a
+	b := l.AddTimeout(10*time.Millisecond, func() error { bRan = true; return nil })
+	l.CancelTimer(&cp)
+	l.CancelTimer(a)
+	if len(l.timers) != 1 {
+		t.Fatalf("got %d timers in the heap, want 1", len(l.timers))
+	}
+	if l.timers[0] != b.t {
+		t.Fatalf("expected timer b to be the only timer left in the heap")
+	}
+	if err := l.runDueTimers(20 * time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if aRan {
+		t.Fatal("a ran")
+	}
+	if !bRan {
+		t.Fatal("b didn't run")
+	}
+}
+
+// IDs
+
+// ID returns 1, 2, … in creation order for timers on one loop, starts again
+// at 1 on another loop, and returns 0 for a nil or zero Timer.
+func TestTimerID(t *testing.T) {
+	l := newLoop(t)
+	zeroTimer := &Timer{}
+	if zeroTimer.ID() != 0 {
+		t.Fatalf("got ID 0, got %d", zeroTimer.ID())
+	}
+	var nilTimer *Timer
+	if nilTimer.ID() != 0 {
+		t.Fatalf("got ID 0, got %d", nilTimer.ID())
+	}
+	tm1 := l.AddTimeout(time.Millisecond, func() error { return nil })
+	if tm1.ID() != 1 {
+		t.Fatalf("got ID 1, got %d", tm1.ID())
+	}
+	tm2 := l.AddTimeout(time.Millisecond, func() error { return nil })
+	if tm2.ID() != 2 {
+		t.Fatalf("got ID 2, got %d", tm2.ID())
+	}
+	l2 := newLoop(t)
+	tm3 := l2.AddTimeout(time.Millisecond, func() error { return nil })
+	if tm3.ID() != 1 {
+		t.Fatalf("got ID 1, got %d", tm3.ID())
 	}
 }
 

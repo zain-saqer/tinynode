@@ -7,10 +7,8 @@ import (
 
 const maxTimeout = (1<<31 - 1) * time.Millisecond
 
-// Timer represents a timer that can be canceled.
-type Timer struct {
-	// TODO: make unexport ID
-	ID       int64
+type timer struct {
+	id       int64
 	loop     *Loop
 	schedule int64
 	index    int
@@ -21,8 +19,22 @@ type Timer struct {
 	callback func() error
 }
 
+// Timer represents a timer that can be canceled. Copies of a Timer refer to
+// the same timer.
+type Timer struct {
+	t *timer
+}
+
+// ID returns the ID of the timer. IDs are unique within a loop.
+func (h *Timer) ID() int64 {
+	if h == nil || h.t == nil {
+		return 0
+	}
+	return h.t.id
+}
+
 // timerHeap orders timers by runAt then schedule, soonest first.
-type timerHeap []*Timer
+type timerHeap []*timer
 
 func (h *timerHeap) Len() int { return len(*h) }
 func (h *timerHeap) Less(i, j int) bool {
@@ -38,7 +50,7 @@ func (h *timerHeap) Swap(i, j int) {
 }
 func (h *timerHeap) Push(x any) {
 	n := len(*h)
-	item := x.(*Timer)
+	item := x.(*timer)
 	item.index = n
 	*h = append(*h, item)
 }
@@ -73,54 +85,58 @@ func (l *Loop) addTimer(timeout time.Duration, repeat bool, callback func() erro
 		timeout = time.Millisecond
 	}
 	l.nextTimerID++
-	timer := &Timer{
-		ID:       l.nextTimerID,
+	tm := &timer{
+		id:       l.nextTimerID,
 		loop:     l,
 		timeout:  timeout,
 		callback: callback,
 		repeat:   repeat,
 	}
-	l.push(timer)
-	return timer
+	l.push(tm)
+	return &Timer{tm}
 }
 
-func (l *Loop) push(timer *Timer) {
-	timer.schedule = l.nextSeq
+func (l *Loop) push(tm *timer) {
+	tm.schedule = l.nextSeq
 	l.nextSeq++
-	timer.runAt = l.Now() + timer.timeout
-	heap.Push(&l.timers, timer)
+	tm.runAt = l.Now() + tm.timeout
+	heap.Push(&l.timers, tm)
 }
 
 // CancelTimer cancels a timer. It is safe to call CancelTimer multiple times.
 // It is safe to call CancelTimer from inside a callback. A nil timer or one
 // from another loop is ignored.
-func (l *Loop) CancelTimer(timer *Timer) {
-	if timer == nil || timer.loop != l || timer.canceled {
+func (l *Loop) CancelTimer(h *Timer) {
+	if h == nil || h.t == nil {
 		return
 	}
-	timer.canceled = true
-	if timer.index != -1 {
-		heap.Remove(&l.timers, timer.index)
+	tm := h.t
+	if tm.loop != l || tm.canceled {
+		return
+	}
+	tm.canceled = true
+	if tm.index != -1 {
+		heap.Remove(&l.timers, tm.index)
 	}
 }
 
 func (l *Loop) runDueTimers(now time.Duration) error {
-	timers := make([]*Timer, 0)
+	timers := make([]*timer, 0)
 	for len(l.timers) > 0 && l.timers[0].runAt <= now {
-		timer := heap.Pop(&l.timers).(*Timer)
-		timers = append(timers, timer)
+		tm := heap.Pop(&l.timers).(*timer)
+		timers = append(timers, tm)
 	}
-	for _, timer := range timers {
-		if timer.canceled {
+	for _, tm := range timers {
+		if tm.canceled {
 			continue
 		}
-		if err := timer.callback(); err != nil {
+		if err := tm.callback(); err != nil {
 			// the event loop never runs again after returning an error.
 			// it is ok to lose the timers that didn't run.
 			return err
 		}
-		if timer.repeat && !timer.canceled {
-			l.push(timer)
+		if tm.repeat && !tm.canceled {
+			l.push(tm)
 		}
 	}
 	return nil
