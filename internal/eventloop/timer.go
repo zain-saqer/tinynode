@@ -80,6 +80,9 @@ func (l *Loop) AddTimeout(timeout time.Duration, callback func() error) *Timer {
 }
 
 func (l *Loop) addTimer(timeout time.Duration, repeat bool, callback func() error) *Timer {
+	if callback == nil {
+		panic("callback cannot be nil")
+	}
 	timeout = max(timeout, time.Millisecond)
 	if timeout > maxTimeout {
 		timeout = time.Millisecond

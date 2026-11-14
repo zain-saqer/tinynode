@@ -622,3 +622,39 @@ func TestLoopsRunConcurrently(t *testing.T) {
 		t.Fatalf("got l2Events %v, want [4 5 6]", l2Events)
 	}
 }
+
+// Nil callbacks
+
+// AddTimeout and AddInterval panic right away on a nil callback, at the
+// caller's line, instead of later when the timer fires. Nothing is added to
+// the heap and no ID is used up.
+func TestAddTimerPanicsOnNilCallback(t *testing.T) {
+	tests := []struct {
+		name string
+		add  func(l *Loop) *Timer
+	}{
+		{"timeout", func(l *Loop) *Timer { return l.AddTimeout(time.Millisecond, nil) }},
+		{"interval", func(l *Loop) *Timer { return l.AddInterval(time.Millisecond, nil) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := newLoop(t)
+			l.now = func() time.Duration { return 0 }
+			func() {
+				defer func() {
+					if r := recover(); r == nil {
+						t.Fatal("got no panic, want a panic")
+					}
+				}()
+				tt.add(l)
+			}()
+			if len(l.timers) != 0 {
+				t.Fatalf("got %d timers, want 0", len(l.timers))
+			}
+			h := l.AddTimeout(time.Millisecond, func() error { return nil })
+			if h.ID() != 1 {
+				t.Fatalf("got ID %d, want 1", h.ID())
+			}
+		})
+	}
+}
