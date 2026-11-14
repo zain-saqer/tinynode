@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// Loop represents an event loop.
 type Loop struct {
 	timers      timerHeap
 	now         func() time.Duration
@@ -13,15 +14,15 @@ type Loop struct {
 	err         error
 }
 
+// Now returns the loop's current time from a monotonic clock.
 func (l *Loop) Now() time.Duration {
 	return l.now()
 }
 
+// New creates a new event loop.
 func New() (*Loop, error) {
 	loop := &Loop{
-		now:         sinceStart,
-		nextTimerID: 1,
-		nextSeq:     1,
+		now: sinceStart,
 	}
 	heap.Init(&loop.timers)
 	return loop, nil
@@ -31,9 +32,9 @@ func (l *Loop) isAlive() bool {
 	return len(l.timers) > 0
 }
 
-// Run runs the loop until no timers are left. After Run returns an error, the Loop must not be used again.
+// Run runs the loop until no timers are left. After Run returns an error, the
+// Loop must not be used again.
 func (l *Loop) Run() error {
-	// after Run returns an error, the Loop must not be used again
 	if l.err != nil {
 		return l.err
 	}

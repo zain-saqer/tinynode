@@ -230,6 +230,35 @@ func TestRunDueTimersReschedulesRepeatingTimer(t *testing.T) {
 	}
 }
 
+func TestRescheduledIntervalRunsAfterTimersWithSameDeadline(t *testing.T) {
+	l := newLoop(t)
+	offset := time.Duration(0)
+	l.now = func() time.Duration {
+		return offset
+	}
+	events := ""
+	l.AddInterval(time.Millisecond, func() error {
+		events += "A"
+		return nil
+	})
+	l.AddTimeout(2*time.Millisecond, func() error {
+		events += "B"
+		return nil
+	})
+	offset = time.Millisecond
+	if err := l.runDueTimers(offset); err != nil {
+		t.Fatal(err)
+	}
+	offset = 2 * time.Millisecond
+	if err := l.runDueTimers(offset); err != nil {
+		t.Fatal(err)
+	}
+	// A is re-inserted at 2ms after B, so B runs first.
+	if events != "ABA" {
+		t.Fatalf("expected events to be ABA, got %s", events)
+	}
+}
+
 // Errors
 
 func TestRunDueTimersStopsWhenTimerReturnsError(t *testing.T) {

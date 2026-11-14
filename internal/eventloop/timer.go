@@ -7,6 +7,7 @@ import (
 
 const maxTimeout = (1<<31 - 1) * time.Millisecond
 
+// Timer represents a timer that can be canceled.
 type Timer struct {
 	// TODO: make unexport ID
 	ID       int64
@@ -20,7 +21,7 @@ type Timer struct {
 	callback func() error
 }
 
-// timerHeap orders timers by RunAt, soonest first.
+// timerHeap orders timers by runAt then schedule, soonest first.
 type timerHeap []*Timer
 
 func (h *timerHeap) Len() int { return len(*h) }
@@ -51,50 +52,48 @@ func (h *timerHeap) Pop() any {
 	return x
 }
 
-// TODO: extract the duplicate code from AddInterval and AddTimeout
-
-func (l *Loop) AddInterval(timeout time.Duration, callback func() error) *Timer {
-	timeout = max(timeout, time.Millisecond)
-	if timeout > maxTimeout {
-		timeout = time.Millisecond
-	}
-	timer := &Timer{
-		ID:       l.nextTimerID,
-		loop:     l,
-		schedule: l.nextSeq,
-		timeout:  timeout,
-		runAt:    l.Now() + timeout,
-		callback: callback,
-		repeat:   true,
-		canceled: false,
-	}
-	l.nextTimerID++
-	l.nextSeq++
-	heap.Push(&l.timers, timer)
-	return timer
+// AddInterval adds a timer that will run repeatedly at the specified interval.
+// It returns a Timer that can be passed to CancelTimer. It clamps interval values
+// less than 1 millisecond or greater than 1<<31 - 1 milliseconds to 1 millisecond.
+// It reschedules from Now().
+func (l *Loop) AddInterval(interval time.Duration, callback func() error) *Timer {
+	return l.addTimer(interval, true, callback)
 }
 
+// AddTimeout schedules callback to run once after timeout. It returns
+// a Timer that can be passed to CancelTimer. It clamps timeout values less than
+// 1 millisecond or greater than 1<<31 - 1 milliseconds to 1 millisecond.
 func (l *Loop) AddTimeout(timeout time.Duration, callback func() error) *Timer {
+	return l.addTimer(timeout, false, callback)
+}
+
+func (l *Loop) addTimer(timeout time.Duration, repeat bool, callback func() error) *Timer {
 	timeout = max(timeout, time.Millisecond)
 	if timeout > maxTimeout {
 		timeout = time.Millisecond
 	}
+	l.nextTimerID++
 	timer := &Timer{
 		ID:       l.nextTimerID,
 		loop:     l,
-		schedule: l.nextSeq,
 		timeout:  timeout,
-		runAt:    l.Now() + timeout,
 		callback: callback,
-		repeat:   false,
-		canceled: false,
+		repeat:   repeat,
 	}
-	l.nextTimerID++
-	l.nextSeq++
-	heap.Push(&l.timers, timer)
+	l.push(timer)
 	return timer
 }
 
+func (l *Loop) push(timer *Timer) {
+	timer.schedule = l.nextSeq
+	l.nextSeq++
+	timer.runAt = l.Now() + timer.timeout
+	heap.Push(&l.timers, timer)
+}
+
+// CancelTimer cancels a timer. It is safe to call CancelTimer multiple times.
+// It is safe to call CancelTimer from inside a callback. A nil timer or one
+// from another loop is ignored.
 func (l *Loop) CancelTimer(timer *Timer) {
 	if timer == nil || timer.loop != l || timer.canceled {
 		return
@@ -103,16 +102,6 @@ func (l *Loop) CancelTimer(timer *Timer) {
 	if timer.index != -1 {
 		heap.Remove(&l.timers, timer.index)
 	}
-}
-
-func (l *Loop) reschedule(timer *Timer) {
-	if timer.canceled {
-		return
-	}
-	timer.schedule = l.nextSeq
-	l.nextSeq++
-	timer.runAt = l.Now() + timer.timeout
-	heap.Push(&l.timers, timer)
 }
 
 func (l *Loop) runDueTimers(now time.Duration) error {
@@ -130,8 +119,8 @@ func (l *Loop) runDueTimers(now time.Duration) error {
 			// it is ok to lose the timers that didn't run.
 			return err
 		}
-		if timer.repeat {
-			l.reschedule(timer)
+		if timer.repeat && !timer.canceled {
+			l.push(timer)
 		}
 	}
 	return nil
