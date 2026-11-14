@@ -178,6 +178,74 @@ func TestRunDueTimersRunsDueTimersInOrder(t *testing.T) {
 	}
 }
 
+// A timeout added from inside another timer's callback is scheduled from
+// Now(), keeps the loop alive, and runs on a later pass, not in the same one.
+func TestAddTimeoutWorksInsideAddTimeoutCallback(t *testing.T) {
+	l := newLoop(t)
+	offset := time.Duration(0)
+	l.now = func() time.Duration {
+		return offset
+	}
+	runs := 0
+	var a *Timer
+	var b *Timer
+	a = l.AddTimeout(1*time.Millisecond, func() error {
+		runs++
+		b = l.AddTimeout(1*time.Millisecond, func() error {
+			runs++
+			return nil
+		})
+		return nil
+	})
+	if len(l.timers) != 1 {
+		t.Fatalf("got %d timers, want 1", len(l.timers))
+	}
+	if l.timers[0].id != a.ID() {
+		t.Fatalf("got timer id %d, want %d", l.timers[0].id, a.ID())
+	}
+	offset = 1 * time.Millisecond
+	if err := l.runDueTimers(offset); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.timers) != 1 {
+		t.Fatalf("got %d timers, want 1", len(l.timers))
+	}
+	if l.timers[0].id != b.ID() {
+		t.Fatalf("got timer id %d, want %d", l.timers[0].id, b.ID())
+	}
+	if runs != 1 {
+		t.Fatalf("got %d runs, want 1", runs)
+	}
+	offset = 2 * time.Millisecond
+	if err := l.runDueTimers(offset); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 2 {
+		t.Fatalf("got %d runs, want 2", runs)
+	}
+}
+
+// runDueTimers reuses its batch buffer and doesn't allocate once warmed up.
+func TestRunDueTimersDoesNotAllocate(t *testing.T) {
+	l := newLoop(t)
+	offset := time.Duration(0)
+	l.now = func() time.Duration {
+		return offset
+	}
+	l.AddInterval(time.Millisecond, func() error { return nil })
+	l.AddInterval(time.Millisecond, func() error { return nil })
+	l.AddInterval(time.Millisecond, func() error { return nil })
+	allocs := testing.AllocsPerRun(100, func() {
+		offset += time.Millisecond
+		if err := l.runDueTimers(offset); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("got %v allocs, want 0", allocs)
+	}
+}
+
 // Several timers with the same deadline run in the order they were added.
 func TestEqualDeadlinesRunInInsertionOrder(t *testing.T) {
 	l := newLoop(t)

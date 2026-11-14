@@ -104,3 +104,12 @@ func TestEventLoopStopsWhenTimerReturnsError(t *testing.T) {
 		t.Fatalf("got %v, want %v", err, expectedError)
 	}
 }
+
+// Run returns right away on a loop with no timers.
+func TestRunReturnsOnEmptyLoop(t *testing.T) {
+	loop := newLoop(t)
+	err := runWithTimeout(t, loop)
+	if err != nil {
+		t.Fatal(err)
+	}
+}

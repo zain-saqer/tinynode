@@ -81,7 +81,7 @@ func (l *Loop) AddTimeout(timeout time.Duration, callback func() error) *Timer {
 
 func (l *Loop) addTimer(timeout time.Duration, repeat bool, callback func() error) *Timer {
 	if callback == nil {
-		panic("callback cannot be nil")
+		panic("eventloop: nil timer callback")
 	}
 	timeout = max(timeout, time.Millisecond)
 	if timeout > maxTimeout {
@@ -124,12 +124,13 @@ func (l *Loop) CancelTimer(h *Timer) {
 }
 
 func (l *Loop) runDueTimers(now time.Duration) error {
-	timers := make([]*timer, 0)
+	l.batch = l.batch[:0]
+	defer func() { clear(l.batch) }()
 	for len(l.timers) > 0 && l.timers[0].runAt <= now {
 		tm := heap.Pop(&l.timers).(*timer)
-		timers = append(timers, tm)
+		l.batch = append(l.batch, tm)
 	}
-	for _, tm := range timers {
+	for _, tm := range l.batch {
 		if tm.canceled {
 			continue
 		}

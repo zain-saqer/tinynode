@@ -12,6 +12,7 @@ type Loop struct {
 	nextTimerID int64
 	nextSeq     int64
 	err         error
+	batch       []*timer
 }
 
 // Now returns the loop's current time from a monotonic clock.
@@ -33,7 +34,8 @@ func (l *Loop) isAlive() bool {
 }
 
 // Run runs the loop until no timers are left. After Run returns an error, the
-// Loop must not be used again.
+// Loop must not be used again. A Loop is not safe for concurrent use. Run must
+// not be called from a callback.
 func (l *Loop) Run() error {
 	if l.err != nil {
 		return l.err

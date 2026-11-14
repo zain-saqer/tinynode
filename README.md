@@ -14,7 +14,7 @@ This is a second attempt. In the first version an AI assistant wrote most of the
 
 Work in progress. Planned milestones:
 
-- [ ] **Event loop with timers:** a loop that runs due timers from a min-heap and exits when no work is left.
+- [x] **Event loop with timers:** a loop that runs due timers from a min-heap and exits when no work is left.
 - [ ] **kqueue poller:** wait in `kevent` until a file descriptor is ready or the next timer is due.
 - [ ] **Non-blocking TCP:** `socket` / `bind` / `listen` / `accept`, buffered writes with backpressure, graceful close.
 - [ ] **V8 bindings:** `log`, `setTimeout`, `net.createServer`, sockets, with Go errors thrown as JS errors.
