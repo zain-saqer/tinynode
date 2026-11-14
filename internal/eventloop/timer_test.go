@@ -21,7 +21,7 @@ func TestAddTimeoutMaxBoundary(t *testing.T) {
 		return nil
 	})
 	if h1.t.timeout != timeout {
-		t.Fatalf("expected timeout %v, got %v", timeout, h1.t.timeout)
+		t.Fatalf("got timeout %v, want %v", h1.t.timeout, timeout)
 	}
 	// 1 ms above the timeout clamps to 1 ms
 	timeout2 := (1 << 31) * time.Millisecond
@@ -29,7 +29,7 @@ func TestAddTimeoutMaxBoundary(t *testing.T) {
 		return nil
 	})
 	if h2.t.timeout != time.Millisecond {
-		t.Fatalf("expected timeout %v, got %v", time.Millisecond, h2.t.timeout)
+		t.Fatalf("got timeout %v, want %v", h2.t.timeout, time.Millisecond)
 	}
 }
 
@@ -58,13 +58,13 @@ func TestAddTimeoutClampsNonPositiveTimeout(t *testing.T) {
 				t.Fatal(err)
 			}
 			if runs != 0 {
-				t.Fatalf("expected 0 runs, got %d", runs)
+				t.Fatalf("got %d runs, want 0", runs)
 			}
 			if err := l.runDueTimers(time.Millisecond); err != nil {
 				t.Fatal(err)
 			}
 			if runs != 1 {
-				t.Fatalf("expected 1 runs, got %d", runs)
+				t.Fatalf("got %d runs, want 1", runs)
 			}
 		})
 	}
@@ -89,7 +89,7 @@ func TestClampedTimeoutsRunInInsertionOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(events, []int{1, 2}) {
-		t.Fatalf("expected events to be [1, 2], got %v", events)
+		t.Fatalf("got events %v, want [1 2]", events)
 	}
 }
 
@@ -124,7 +124,7 @@ func TestAddIntervalClampsZeroTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	if runs != 1 {
-		t.Fatalf("expected 1 runs, got %d", runs)
+		t.Fatalf("got %d runs, want 1", runs)
 	}
 }
 
@@ -139,13 +139,13 @@ func TestAddTimeoutHugeTimeoutDoesNotOverflow(t *testing.T) {
 		return nil
 	})
 	if h.t.timeout != time.Millisecond {
-		t.Fatalf("expected timeout to be %v, got %v", time.Millisecond, h.t.timeout)
+		t.Fatalf("got timeout %v, want %v", h.t.timeout, time.Millisecond)
 	}
 	if err := l.runDueTimers(time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	if runs != 1 {
-		t.Fatalf("expected 1 runs, got %d", runs)
+		t.Fatalf("got %d runs, want 1", runs)
 	}
 }
 
@@ -174,7 +174,7 @@ func TestRunDueTimersRunsDueTimersInOrder(t *testing.T) {
 	}
 	expectedEvents := []int{1, 4, 3}
 	if !slices.Equal(events, expectedEvents) {
-		t.Fatalf("expected events %v, got %v", expectedEvents, events)
+		t.Fatalf("got events %v, want %v", events, expectedEvents)
 	}
 }
 
@@ -202,7 +202,7 @@ func TestEqualDeadlinesRunInInsertionOrder(t *testing.T) {
 	}
 	expectedEvents := []int{2, 3, 1, 4}
 	if !slices.Equal(events, expectedEvents) {
-		t.Fatalf("expected events %v, got %v", expectedEvents, events)
+		t.Fatalf("got events %v, want %v", events, expectedEvents)
 	}
 }
 
@@ -226,7 +226,7 @@ func TestRunDueTimersReschedulesRepeatingTimer(t *testing.T) {
 		}
 	}
 	if runs != 5 {
-		t.Fatalf("expected 5 runs, got %d", runs)
+		t.Fatalf("got %d runs, want 5", runs)
 	}
 }
 
@@ -255,7 +255,7 @@ func TestRescheduledIntervalRunsAfterTimersWithSameDeadline(t *testing.T) {
 	}
 	// A is re-inserted at 2ms after B, so B runs first.
 	if events != "ABA" {
-		t.Fatalf("expected events to be ABA, got %s", events)
+		t.Fatalf("got events %s, want ABA", events)
 	}
 }
 
@@ -292,10 +292,10 @@ func TestCancelTimerNoOpOnInvalidTimers(t *testing.T) {
 	assertOnlyTimer := func(t *testing.T, loop *Loop, tm *timer) {
 		t.Helper()
 		if len(loop.timers) != 1 {
-			t.Fatalf("expected length of timers to be 1, got %d", len(loop.timers))
+			t.Fatalf("got %d timers, want 1", len(loop.timers))
 		}
 		if loop.timers[0] != tm {
-			t.Fatalf("expected existing timer to still be in timers, got %v", loop.timers)
+			t.Fatalf("got timer ID %d in the heap, want %d", loop.timers[0].id, tm.id)
 		}
 	}
 	t.Run("nil", func(t *testing.T) {
@@ -327,7 +327,7 @@ func TestCancelTimerNoOpOnInvalidTimers(t *testing.T) {
 		loop.now = func() time.Duration { return 0 }
 		loop.CancelTimer(&Timer{})
 		if len(loop.timers) != 0 {
-			t.Fatalf("expected length of timers to be 0, got %d", len(loop.timers))
+			t.Fatalf("got %d timers, want 0", len(loop.timers))
 		}
 	})
 
@@ -339,7 +339,7 @@ func TestCancelTimerNoOpOnInvalidTimers(t *testing.T) {
 		loop2.now = func() time.Duration { return 0 }
 		loop2.CancelTimer(h)
 		if len(loop2.timers) != 0 {
-			t.Fatalf("expected length of timers to be 0, got %d", len(loop2.timers))
+			t.Fatalf("got %d timers, want 0", len(loop2.timers))
 		}
 		assertOnlyTimer(t, loop, h.t)
 		if h.t.canceled {
@@ -371,13 +371,13 @@ func TestCancelTimerDoesNotChangeOtherLoopTimers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if runs != 2 {
-		t.Fatalf("expected 2 callbacks, got %d", runs)
+		t.Fatalf("got %d runs, want 2", runs)
 	}
 	if len(loop1.timers) != 1 {
-		t.Fatalf("expected length of timers to be 1, got %d", len(loop1.timers))
+		t.Fatalf("got %d timers, want 1", len(loop1.timers))
 	}
 	if loop1.timers[0] != intervalA.t {
-		t.Fatalf("expected existing timer to still be in timers, got %v", loop1.timers)
+		t.Fatalf("got timer ID %d in the heap, want %d (A)", loop1.timers[0].id, intervalA.ID())
 	}
 }
 
@@ -395,7 +395,7 @@ func TestCancelTimerBeforeItFires(t *testing.T) {
 	})
 	l.CancelTimer(timer)
 	if err := l.runDueTimers(2 * time.Millisecond); err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+		t.Fatalf("got error %v, want nil", err)
 	}
 	if runs != 0 {
 		t.Fatal("expected timer to not run")
@@ -421,16 +421,16 @@ func TestCancelTimerFromOwnCallback(t *testing.T) {
 		return nil
 	})
 	if err := l.runDueTimers(1 * time.Millisecond); err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+		t.Fatalf("got error %v, want nil", err)
 	}
 	if runs != 1 {
-		t.Fatalf("expected timer to run once, but it ran %d times", runs)
+		t.Fatalf("got %d runs, want 1", runs)
 	}
 	if err := l.runDueTimers(2 * time.Millisecond); err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+		t.Fatalf("got error %v, want nil", err)
 	}
 	if runs != 1 {
-		t.Fatalf("expected timer to run once, but it ran %d times", runs)
+		t.Fatalf("got %d runs, want 1", runs)
 	}
 }
 
@@ -452,7 +452,7 @@ func TestCancelTimerFromAnotherTimersCallback(t *testing.T) {
 		return nil
 	})
 	if err := l.runDueTimers(3 * time.Millisecond); err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+		t.Fatalf("got error %v, want nil", err)
 	}
 	if runs != 0 {
 		t.Fatalf("expected canceled timer to not run")
@@ -474,7 +474,7 @@ func TestCancelTimerTwice(t *testing.T) {
 	l.CancelTimer(timer)
 	l.CancelTimer(timer)
 	if err := l.runDueTimers(3 * time.Millisecond); err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+		t.Fatalf("got error %v, want nil", err)
 	}
 	if runs != 0 {
 		t.Fatalf("expected canceled timer to not run")
@@ -499,17 +499,17 @@ func TestCancelTimerAfterItFired(t *testing.T) {
 		return nil
 	})
 	if err := l.runDueTimers(1 * time.Millisecond); err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+		t.Fatalf("got error %v, want nil", err)
 	}
 	if runs != 1 {
-		t.Fatalf("expected runs to be 1, got %d", runs)
+		t.Fatalf("got %d runs, want 1", runs)
 	}
 	l.CancelTimer(h1)
 	if len(l.timers) != 1 {
-		t.Fatalf("expected one timer left in the heap")
+		t.Fatalf("got %d timers, want 1", len(l.timers))
 	}
 	if l.timers[0].id != h2.t.id {
-		t.Fatalf("expected timer2 to be the only timer left in the heap")
+		t.Fatalf("got timer ID %d in the heap, want %d (timer2)", l.timers[0].id, h2.ID())
 	}
 }
 
@@ -529,10 +529,10 @@ func TestCancelTimerCopyCancelsSameTimer(t *testing.T) {
 	l.CancelTimer(&cp)
 	l.CancelTimer(a)
 	if len(l.timers) != 1 {
-		t.Fatalf("got %d timers in the heap, want 1", len(l.timers))
+		t.Fatalf("got %d timers, want 1", len(l.timers))
 	}
 	if l.timers[0] != b.t {
-		t.Fatalf("expected timer b to be the only timer left in the heap")
+		t.Fatalf("got timer ID %d in the heap, want %d (b)", l.timers[0].id, b.ID())
 	}
 	if err := l.runDueTimers(20 * time.Millisecond); err != nil {
 		t.Fatal(err)
@@ -553,24 +553,24 @@ func TestTimerID(t *testing.T) {
 	l := newLoop(t)
 	zeroTimer := &Timer{}
 	if zeroTimer.ID() != 0 {
-		t.Fatalf("got ID 0, got %d", zeroTimer.ID())
+		t.Fatalf("got ID %d, want 0", zeroTimer.ID())
 	}
 	var nilTimer *Timer
 	if nilTimer.ID() != 0 {
-		t.Fatalf("got ID 0, got %d", nilTimer.ID())
+		t.Fatalf("got ID %d, want 0", nilTimer.ID())
 	}
 	tm1 := l.AddTimeout(time.Millisecond, func() error { return nil })
 	if tm1.ID() != 1 {
-		t.Fatalf("got ID 1, got %d", tm1.ID())
+		t.Fatalf("got ID %d, want 1", tm1.ID())
 	}
 	tm2 := l.AddTimeout(time.Millisecond, func() error { return nil })
 	if tm2.ID() != 2 {
-		t.Fatalf("got ID 2, got %d", tm2.ID())
+		t.Fatalf("got ID %d, want 2", tm2.ID())
 	}
 	l2 := newLoop(t)
 	tm3 := l2.AddTimeout(time.Millisecond, func() error { return nil })
 	if tm3.ID() != 1 {
-		t.Fatalf("got ID 1, got %d", tm3.ID())
+		t.Fatalf("got ID %d, want 1", tm3.ID())
 	}
 }
 
@@ -610,15 +610,15 @@ func TestLoopsRunConcurrently(t *testing.T) {
 		done2 <- l2.runDueTimers(1 * time.Millisecond)
 	}()
 	if err := <-done; err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+		t.Fatalf("got error %v, want nil", err)
 	}
 	if err := <-done2; err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+		t.Fatalf("got error %v, want nil", err)
 	}
 	if !slices.Equal(l1Events, []int{1, 2, 3}) {
-		t.Fatalf("expected l1Events to be [1, 2, 3], got %v", l1Events)
+		t.Fatalf("got l1Events %v, want [1 2 3]", l1Events)
 	}
 	if !slices.Equal(l2Events, []int{4, 5, 6}) {
-		t.Fatalf("expected l2Events to be [4, 5, 6], got %v", l2Events)
+		t.Fatalf("got l2Events %v, want [4 5 6]", l2Events)
 	}
 }

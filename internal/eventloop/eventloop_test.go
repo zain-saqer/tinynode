@@ -58,10 +58,10 @@ func TestTimeoutRunInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if runs != 2 {
-		t.Fatalf("expected 2 runs, got %d", runs)
+		t.Fatalf("got %d runs, want 2", runs)
 	}
 	if !slices.Equal(events, []int{1, 2}) {
-		t.Fatalf("expected events to be %v, got %v", []int{1, 2}, events)
+		t.Fatalf("got events %v, want %v", events, []int{1, 2})
 	}
 }
 
@@ -82,7 +82,7 @@ func TestRunWaitsForTimer(t *testing.T) {
 		t.Fatal("expected timer to fire")
 	}
 	if elapsed := loop.Now() - start; elapsed < 20*time.Millisecond {
-		t.Fatalf("expected elapsed time to be at least 20ms, got %v", elapsed)
+		t.Fatalf("got elapsed %v, want at least 20ms", elapsed)
 	}
 }
 
