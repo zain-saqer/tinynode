@@ -13,6 +13,11 @@ func newLoop(t *testing.T) *Loop {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := loop.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	return loop
 }
 
@@ -111,5 +116,21 @@ func TestRunReturnsOnEmptyLoop(t *testing.T) {
 	err := runWithTimeout(t, loop)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Run on a closed loop with a pending timer must fail with ErrClosed instead
+// of blocking or touching a reused fd.
+func TestRunAfterCloseReturnsErrClosed(t *testing.T) {
+	l := newLoop(t)
+	l.now = func() time.Duration {
+		return 0
+	}
+	l.AddTimeout(time.Millisecond, func() error { return nil })
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := runWithTimeout(t, l); !errors.Is(err, ErrClosed) {
+		t.Fatalf("got %v, want %v", err, ErrClosed)
 	}
 }
