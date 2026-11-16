@@ -35,7 +35,7 @@ Dependencies should go one way: `main → bindings → netio → eventloop`.
 
 ## Requirements
 
-macOS (for kqueue), Go 1.27+, and cgo (for v8go, once the bindings exist).
+macOS (for kqueue; Linux with epoll is planned), Go 1.27+, and cgo (for v8go, once the bindings exist).
 
 ## Building and testing
 

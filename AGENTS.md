@@ -62,5 +62,6 @@ don't bury real bugs under style nits.
 - Module: `github.com/zain-saqer/tinynode`
 - Build: `go build ./...`
 - Vet and test: `go vet ./... && go test -race ./...`
-- The event loop targets macOS only (kqueue).
+- The event loop targets macOS (kqueue) for now; Linux (epoll) support is
+  planned for later.
 - Planned layout and dependency direction are in `README.md`.
