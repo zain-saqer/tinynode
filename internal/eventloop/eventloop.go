@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// blockForever is passed to poller.wait to block until an event or wake.
-const blockForever = time.Duration(-1)
-
 // ErrClosed is returned when a Loop is used after Close.
 var ErrClosed = errors.New("loop is closed")
 
@@ -33,19 +30,6 @@ func (i Interest) String() string {
 	default:
 		return fmt.Sprintf("Interest(%d)", int(i))
 	}
-}
-
-// poller waits for readiness on file descriptors. A poller is not safe for
-// concurrent use, except for wake, which may be called from any goroutine to
-// interrupt a blocked wait, but not after close.
-type poller interface {
-	// wait waits for events on file descriptors and calls ready for each one.
-	// A negative timeout blocks until an event or wake.
-	wait(timeout time.Duration, ready func(fd int, interest Interest) error) error
-	close() error
-	add(fd int, interest Interest) error
-	remove(fd int, interest Interest) error
-	wake() error
 }
 
 // Loop represents an event loop.
@@ -81,6 +65,25 @@ func New() (*Loop, error) {
 func (l *Loop) isAlive() bool {
 	return len(l.timers) > 0
 }
+
+// TODO: The "used after Close" contract is only half enforced:
+//   - Run on a closed loop with no timers returns nil instead of ErrClosed,
+//     because isAlive is false and Run never reaches the poller.
+//   - AddTimeout and AddInterval after Close succeed silently; the timer can
+//     never fire and ErrClosed only shows up later, from Run.
+//
+// Give Loop its own closed state, check it at the top of Run, and decide what
+// adding a timer after Close does (panic or no-op), then document it.
+//
+// TODO: Enforce "Close must not be called while Run is running" and "Run must
+// not be called from a callback" with a running flag that Run sets on entry
+// and clears with defer:
+//   - Run while running: panic (always a programming error).
+//   - Close while running: return an ErrRunning error, like libuv's
+//     uv_loop_close returning UV_EBUSY. A callback that wants to shut the
+//     loop down will later use a separate Stop, like uv_stop.
+//
+// A plain bool also lets go test -race catch Close from another goroutine.
 
 // Close releases the loop's resources. It must not be called while Run is
 // running.

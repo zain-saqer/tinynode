@@ -9,6 +9,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// The tests in this file check the poller contract through newPoller, so every
+// backend (kqueue now, epoll later) must pass them. Tests that look inside one
+// backend go in that backend's _test file.
+
 var emptyReady = func(fd int, interest Interest) error { return nil }
 
 // readyCall is one call to a ready callback.
@@ -34,10 +38,11 @@ func assertReadyCalls(t *testing.T, got []readyCall, want ...readyCall) {
 	}
 }
 
-// newTestPoller returns a kqueue poller that is closed when the test ends.
-func newTestPoller(t *testing.T) *kqueuePoller {
+// newTestPoller returns this platform's poller and closes it when the test
+// ends.
+func newTestPoller(t *testing.T) poller {
 	t.Helper()
-	p, err := newKqueuePoller()
+	p, err := newPoller()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +54,7 @@ func newTestPoller(t *testing.T) *kqueuePoller {
 	return p
 }
 
-func waitWithTimeout(t *testing.T, p *kqueuePoller, waitTimeout time.Duration, ready func(fd int, interest Interest) error) error {
+func waitWithTimeout(t *testing.T, p poller, waitTimeout time.Duration, ready func(fd int, interest Interest) error) error {
 	t.Helper()
 	result := make(chan error, 1)
 	go func() {
@@ -102,7 +107,7 @@ func TestEventTriggerKeepsPendingBeforeWaitCall(t *testing.T) {
 	}
 }
 
-// A wait that is already blocked in kevent must return once wake is called.
+// A wait that is already blocked must return once wake is called.
 func TestWakeUnblocksBlockedWait(t *testing.T) {
 	p := newTestPoller(t)
 	waitResult := make(chan error, 1)
@@ -175,8 +180,9 @@ func TestReadTriggerDoesNotPersistAfterRead(t *testing.T) {
 	assertReadyCalls(t, got)
 }
 
-// The wake event must be cleared once wait reports it (EV_CLEAR). Otherwise it
-// stays triggered and every later wait returns at once, so the loop spins.
+// The wake event must be cleared once wait reports it (EV_CLEAR on kqueue).
+// Otherwise it stays triggered and every later wait returns at once, so the
+// loop spins.
 func TestWakeIsClearedAfterWait(t *testing.T) {
 	p := newTestPoller(t)
 	if err := p.wake(); err != nil {
@@ -280,7 +286,7 @@ func TestRemoveStopsReporting(t *testing.T) {
 	assertReadyCalls(t, got)
 }
 
-// Removing an fd that was never registered returns nil (ENOENT is ignored).
+// Removing an fd that was never registered returns nil.
 func TestRemoveUnregisteredReturnsNil(t *testing.T) {
 	p := newTestPoller(t)
 	r, _ := newPipe(t)
@@ -330,34 +336,8 @@ func TestCloseWriteEndReportsReadable(t *testing.T) {
 	}
 }
 
-// Closing a closed poller does not close the reused fd.
-func TestCloseTwiceDoesNotCloseReusedFd(t *testing.T) {
-	p := newTestPoller(t)
-	oldKq := p.kq
-	if err := p.close(); err != nil {
-		t.Fatal(err)
-	}
-	r, w := newPipe(t)
-	if oldKq != r && oldKq != w {
-		t.Fatal("expected the closed poller fd to be equal to one of the pipe ends fds")
-	}
-	if err := p.close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := unix.Write(w, []byte("w")); err != nil {
-		t.Fatal(err)
-	}
-	n, err := unix.Read(r, []byte{0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("expected 1 byte, got %d", n)
-	}
-}
-
 // add, remove, wake and wait on a closed poller must return ErrClosed instead
-// of calling kevent on fd -1 (or on a reused fd).
+// of using fd -1 (or a reused fd).
 func TestPollerMethodsAfterCloseReturnErrClosed(t *testing.T) {
 	p := newTestPoller(t)
 	if err := p.close(); err != nil {
