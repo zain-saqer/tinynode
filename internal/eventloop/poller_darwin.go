@@ -9,14 +9,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// TODO: wake may be called from another goroutine while close runs. That is
-// two problems:
-//   - fd reuse: wake can read kq just before close releases it, then call
-//     kevent on a number the kernel has given to another file.
-//   - data race: wake reads p.kq while close writes it, with no
-//     synchronization between them (go test -race will flag it).
-//
-// Fix both before Loop.Post calls wake from other goroutines.
 type kqueuePoller struct {
 	kq     int
 	events []unix.Kevent_t
