@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,8 @@ const (
 	Writable
 )
 
+// String returns the name of the interest, or Interest(n) for an unknown
+// value.
 func (i Interest) String() string {
 	switch i {
 	case Readable:
@@ -32,8 +35,16 @@ func (i Interest) String() string {
 	}
 }
 
-// Loop represents an event loop.
+// Callback is a function that the Loop runs on the goroutine running Run.
+// AddTimeout and AddInterval run one when a timer is due; Post and
+// Pending.Done queue one to run in the next iteration. If a Callback returns
+// an error, Run stops and returns that error unchanged.
+type Callback func() error
+
+// Loop represents an event loop. A Loop is not safe for concurrent use, except
+// for Post and Pending.Done, which may be called from any goroutine.
 type Loop struct {
+	// These fields are only used on the goroutine running Run.
 	timers      timerHeap
 	now         func() time.Duration
 	nextTimerID int64
@@ -41,6 +52,14 @@ type Loop struct {
 	err         error
 	batch       []*timer
 	poller      poller
+	holds       int // number of Pendings whose Done callback has not run yet
+
+	// mu guards tasks and closed, which Post reads and writes from other
+	// goroutines. Holding mu in both Post and Close also keeps poller.wake
+	// from running during or after poller.close.
+	mu     sync.Mutex
+	tasks  []Callback // callbacks posted since the last runTasks
+	closed bool
 }
 
 // Now returns the loop's current time from a monotonic clock.
@@ -62,8 +81,13 @@ func New() (*Loop, error) {
 	return loop, nil
 }
 
+// isAlive reports whether the loop still has work: a pending timer, a posted
+// callback, or a Pending whose Done callback has not run yet.
 func (l *Loop) isAlive() bool {
-	return len(l.timers) > 0
+	l.mu.Lock()
+	tasksCount := len(l.tasks)
+	l.mu.Unlock()
+	return len(l.timers) > 0 || tasksCount > 0 || l.holds > 0
 }
 
 // TODO: The "used after Close" contract is only half enforced:
@@ -72,8 +96,9 @@ func (l *Loop) isAlive() bool {
 //   - AddTimeout and AddInterval after Close succeed silently; the timer can
 //     never fire and ErrClosed only shows up later, from Run.
 //
-// Give Loop its own closed state, check it at the top of Run, and decide what
-// adding a timer after Close does (panic or no-op), then document it.
+// Loop now has a closed flag (set by Close, checked by Post): check it at the
+// top of Run too, and decide what adding a timer after Close does (panic or
+// no-op), then document it.
 //
 // TODO: Enforce "Close must not be called while Run is running" and "Run must
 // not be called from a callback" with a running flag that Run sets on entry
@@ -85,23 +110,36 @@ func (l *Loop) isAlive() bool {
 //
 // A plain bool also lets go test -race catch Close from another goroutine.
 
-// Close releases the loop's resources. It must not be called while Run is
-// running.
+// Close releases the loop's resources. Callbacks that were posted but have not
+// run yet are dropped, and later calls to Post return ErrClosed. Close must not
+// be called while Run is running. Calling Close more than once returns nil.
 func (l *Loop) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	l.closed = true
+	l.tasks = nil
 	if err := l.poller.close(); err != nil {
 		return fmt.Errorf("eventloop close: %w", err)
 	}
 	return nil
 }
 
-// handleReady is called when an interest event in a file descriptor has occurred.
+// handleReady is called by poller.wait for each fd that is ready. It is a stub
+// until fds can be registered with handlers.
 func (l *Loop) handleReady(fd int, interest Interest) error {
 	return nil
 }
 
-// Run runs the loop until no timers are left. After Run returns an error, the
-// Loop must not be used again. A Loop is not safe for concurrent use. Run must
-// not be called from a callback.
+// Run runs the loop until no timers, posted callbacks or Pendings are left.
+// Each iteration runs the due timers, waits for fd events, a wake from Post,
+// or the next timer, and then runs the posted callbacks.
+//
+// If a Callback returns an error, Run stops and returns that error unchanged.
+// After Run returns an error, the Loop must not be used again. Run must not be
+// called from a Callback.
 func (l *Loop) Run() error {
 	if l.err != nil {
 		return l.err
@@ -121,10 +159,20 @@ func (l *Loop) Run() error {
 		if len(l.timers) > 0 {
 			timeout = max(l.timers[0].runAt-l.now(), 0)
 		}
+		l.mu.Lock()
+		if len(l.tasks) > 0 {
+			timeout = 0
+		}
+		l.mu.Unlock()
 
 		if err := l.poller.wait(timeout, l.handleReady); err != nil {
 			l.err = fmt.Errorf("eventloop run: %w", err)
 			return l.err
+		}
+
+		if err := l.runTasks(); err != nil {
+			l.err = err
+			return err
 		}
 	}
 	return nil

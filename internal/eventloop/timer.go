@@ -16,7 +16,7 @@ type timer struct {
 	runAt    time.Duration
 	repeat   bool
 	canceled bool
-	callback func() error
+	callback Callback
 }
 
 // Timer represents a timer that can be canceled. Copies of a Timer refer to
@@ -64,22 +64,25 @@ func (h *timerHeap) Pop() any {
 	return x
 }
 
-// AddInterval adds a timer that will run repeatedly at the specified interval.
-// It returns a Timer that can be passed to CancelTimer. It clamps interval values
-// less than 1 millisecond or greater than 1<<31 - 1 milliseconds to 1 millisecond.
-// It reschedules from Now().
-func (l *Loop) AddInterval(interval time.Duration, callback func() error) *Timer {
+// AddInterval schedules callback to run every interval until the timer is
+// canceled. After each run, the next run is scheduled interval after Now(), so
+// a slow callback delays later runs instead of making them run back to back.
+// Interval values less than 1 millisecond or greater than 1<<31 - 1
+// milliseconds are clamped to 1 millisecond. It returns a Timer that can be
+// passed to CancelTimer. AddInterval panics if callback is nil.
+func (l *Loop) AddInterval(interval time.Duration, callback Callback) *Timer {
 	return l.addTimer(interval, true, callback)
 }
 
-// AddTimeout schedules callback to run once after timeout. It returns
-// a Timer that can be passed to CancelTimer. It clamps timeout values less than
-// 1 millisecond or greater than 1<<31 - 1 milliseconds to 1 millisecond.
-func (l *Loop) AddTimeout(timeout time.Duration, callback func() error) *Timer {
+// AddTimeout schedules callback to run once after timeout. Timeout values less
+// than 1 millisecond or greater than 1<<31 - 1 milliseconds are clamped to 1
+// millisecond. It returns a Timer that can be passed to CancelTimer.
+// AddTimeout panics if callback is nil.
+func (l *Loop) AddTimeout(timeout time.Duration, callback Callback) *Timer {
 	return l.addTimer(timeout, false, callback)
 }
 
-func (l *Loop) addTimer(timeout time.Duration, repeat bool, callback func() error) *Timer {
+func (l *Loop) addTimer(timeout time.Duration, repeat bool, callback Callback) *Timer {
 	if callback == nil {
 		panic("eventloop: nil timer callback")
 	}
@@ -107,7 +110,7 @@ func (l *Loop) push(tm *timer) {
 }
 
 // CancelTimer cancels a timer. It is safe to call CancelTimer multiple times.
-// It is safe to call CancelTimer from inside a callback. A nil timer or one
+// It is safe to call CancelTimer from inside a Callback. A nil timer or one
 // from another loop is ignored.
 func (l *Loop) CancelTimer(h *Timer) {
 	if h == nil || h.t == nil {

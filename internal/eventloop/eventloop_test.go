@@ -134,3 +134,14 @@ func TestRunAfterCloseReturnsErrClosed(t *testing.T) {
 		t.Fatalf("got %v, want %v", err, ErrClosed)
 	}
 }
+
+// Calling Close twice on a Loop returns nil both times.
+func TestLoopCloseTwiceReturnsNil(t *testing.T) {
+	l := newLoop(t)
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+}
