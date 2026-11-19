@@ -474,3 +474,53 @@ func TestDoneAfterCloseDoesNotHangRun(t *testing.T) {
 		t.Fatalf("Run() = %v, want an error wrapping %v", err, ErrClosed)
 	}
 }
+
+// A callback posted while a batch is running must survive to the next batch
+// and run exactly once (runTasks must not clear or drop the live queue).
+func TestCallbackPostedDuringBatchRunsOnce(t *testing.T) {
+	l := newLoop(t)
+	runs := 0
+	cb := func() error {
+		return l.Post(func() error { runs++; return nil })
+	}
+	if err := l.Post(cb); err != nil {
+		t.Fatal(err)
+	}
+	if err := runWithTimeout(t, l); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 {
+		t.Fatalf("inner callback ran %d times, want 1", runs)
+	}
+}
+
+// Once the two task slices have grown, running a batch must not allocate.
+func TestRunTasksDoesNotAllocate(t *testing.T) {
+	l := newLoop(t)
+	cb := func() error { return nil }
+	n := 100
+	for range n {
+		if err := l.Post(cb); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := l.runTasks(); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.runTasks(); err != nil {
+		t.Fatal(err)
+	}
+	allocs := testing.AllocsPerRun(100, func() {
+		l.mu.Lock()
+		for range n {
+			l.tasks = append(l.tasks, cb)
+		}
+		l.mu.Unlock()
+		if err := l.runTasks(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("got %v allocs, want 0", allocs)
+	}
+}

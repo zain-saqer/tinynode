@@ -50,7 +50,8 @@ type Loop struct {
 	nextTimerID int64
 	nextSeq     int64
 	err         error
-	batch       []*timer
+	timerBatch  []*timer   // the batch runDueTimers is running
+	taskBatch   []Callback // the batch runTasks is running; swapped with tasks each call
 	poller      poller
 	holds       int // number of Pendings whose Done callback has not run yet
 

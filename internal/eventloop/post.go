@@ -22,7 +22,7 @@ type pending struct {
 // Pending; the zero value must not be used. Copies of a Pending refer to the
 // same hold.
 type Pending struct {
-	r *pending
+	p *pending
 }
 
 // Done posts cb to the Loop and releases the hold once cb has run. Done may be
@@ -30,21 +30,21 @@ type Pending struct {
 // and do not post cb. If the Loop is closed, Done returns an error wrapping
 // ErrClosed.
 func (p Pending) Done(cb Callback) error {
-	if p.r == nil {
+	if p.p == nil {
 		panic("eventloop: Done on zero Pending")
 	}
 	if cb == nil {
 		panic(panicNilCallback)
 	}
-	if !p.r.released.CompareAndSwap(false, true) {
+	if !p.p.released.CompareAndSwap(false, true) {
 		return fmt.Errorf("eventloop pending done: %w", ErrAlreadyDone)
 	}
 	wrapper := func() error {
 		err := cb()
-		p.r.l.holds--
+		p.p.l.holds--
 		return err
 	}
-	if err := p.r.l.Post(wrapper); err != nil {
+	if err := p.p.l.Post(wrapper); err != nil {
 		return fmt.Errorf("eventloop pending done: %w", err)
 	}
 
@@ -101,14 +101,13 @@ func (l *Loop) Post(cb Callback) error {
 // dropped.
 func (l *Loop) runTasks() error {
 	l.mu.Lock()
-	batch := l.tasks
-	l.tasks = nil
+	l.tasks, l.taskBatch = l.taskBatch, l.tasks
+	l.tasks = l.tasks[:0]
+	defer func() { clear(l.taskBatch) }()
 	l.mu.Unlock()
-	if len(batch) > 0 {
-		for _, task := range batch {
-			if err := task(); err != nil {
-				return err
-			}
+	for _, task := range l.taskBatch {
+		if err := task(); err != nil {
+			return err
 		}
 	}
 	return nil

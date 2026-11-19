@@ -127,13 +127,13 @@ func (l *Loop) CancelTimer(h *Timer) {
 }
 
 func (l *Loop) runDueTimers(now time.Duration) error {
-	l.batch = l.batch[:0]
-	defer func() { clear(l.batch) }()
+	l.timerBatch = l.timerBatch[:0]
+	defer func() { clear(l.timerBatch) }()
 	for len(l.timers) > 0 && l.timers[0].runAt <= now {
 		tm := heap.Pop(&l.timers).(*timer)
-		l.batch = append(l.batch, tm)
+		l.timerBatch = append(l.timerBatch, tm)
 	}
-	for _, tm := range l.batch {
+	for _, tm := range l.timerBatch {
 		if tm.canceled {
 			continue
 		}
