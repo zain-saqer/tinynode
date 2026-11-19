@@ -11,6 +11,8 @@ import (
 // ErrClosed is returned when a Loop is used after Close.
 var ErrClosed = errors.New("loop is closed")
 
+const panicLoopClosed = "eventloop: loop is closed"
+
 // Interest is the kind of readiness to watch a file descriptor for.
 type Interest int
 
@@ -101,16 +103,6 @@ func (l *Loop) hasTasks() bool {
 	return len(l.tasks) > 0
 }
 
-// TODO: The "used after Close" contract is only half enforced:
-//   - Run on a closed loop with no timers returns nil instead of ErrClosed,
-//     because isAlive is false and Run never reaches the poller.
-//   - AddTimeout and AddInterval after Close succeed silently; the timer can
-//     never fire and ErrClosed only shows up later, from Run.
-//
-// Loop now has a closed flag (set by Close, checked by Post): check it at the
-// top of Run too, and decide what adding a timer after Close does (panic or
-// no-op), then document it.
-//
 // TODO: Enforce "Close must not be called while Run is running" and "Run must
 // not be called from a callback" with a running flag that Run sets on entry
 // and clears with defer:
@@ -122,8 +114,10 @@ func (l *Loop) hasTasks() bool {
 // A plain bool also lets go test -race catch Close from another goroutine.
 
 // Close releases the loop's resources. Callbacks that were posted but have not
-// run yet are dropped, and later calls to Post return ErrClosed. Close must not
-// be called while Run is running. Calling Close more than once returns nil.
+// run yet and timers that have not fired are dropped. After Close, Run, Post
+// and Pending.Done return ErrClosed, AddTimeout, AddInterval and Hold panic,
+// and CancelTimer does nothing. Close must not be called while Run is running.
+// Calling Close more than once returns nil.
 func (l *Loop) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -132,10 +126,23 @@ func (l *Loop) Close() error {
 	}
 	l.closed = true
 	l.tasks = nil
+	for _, tmr := range l.timers {
+		tmr.index = -1
+		tmr.canceled = true
+	}
+	l.timers = nil
 	if err := l.poller.close(); err != nil {
 		return fmt.Errorf("eventloop close: %w", err)
 	}
 	return nil
+}
+
+// isClosed returns whether the loop has been closed. It is safe for concurrent
+// use.
+func (l *Loop) isClosed() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.closed
 }
 
 // handleReady is called by poller.wait for each fd that is ready. It is a stub
@@ -149,11 +156,14 @@ func (l *Loop) handleReady(fd int, interest Interest) error {
 // or the next timer, and then runs the posted callbacks.
 //
 // If a Callback returns an error, Run stops and returns that error unchanged.
-// After Run returns an error, the Loop must not be used again. Run must not be
-// called from a Callback.
+// After Run returns an error, the Loop must not be used again. Run returns
+// ErrClosed if the Loop is closed. Run must not be called from a Callback.
 func (l *Loop) Run() error {
 	if l.err != nil {
 		return l.err
+	}
+	if l.isClosed() {
+		return ErrClosed
 	}
 	for {
 		now := l.now()

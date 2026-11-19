@@ -51,10 +51,15 @@ func (p Pending) Done(cb Callback) error {
 	return nil
 }
 
-// Hold returns a Pending that keeps the Loop alive until its Done is called.
-// Done sends the result back to the Loop as a Callback. Hold must be called on
-// the goroutine running Run (before Run, or from a Callback).
+// Hold returns a Pending that keeps the Loop alive until the callback passed to
+// its Done has run, so Run does not return while other goroutines are still
+// working on something they will report back. Like AddTimeout, Hold must be
+// called on the goroutine that owns the Loop: before Run, or from a Callback.
+// Hold panics if the Loop is closed.
 func (l *Loop) Hold() Pending {
+	if l.isClosed() {
+		panic(panicLoopClosed)
+	}
 	l.holds++
 	return Pending{
 		&pending{

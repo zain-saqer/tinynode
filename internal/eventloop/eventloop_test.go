@@ -145,3 +145,30 @@ func TestLoopCloseTwiceReturnsNil(t *testing.T) {
 		t.Fatalf("Close() = %v, want nil", err)
 	}
 }
+
+// Run on a closed loop with no timers, tasks or holds must return ErrClosed,
+// not nil. Before the closed check, isAlive was false, so Run returned nil
+// without ever reaching the poller.
+func TestRunOnClosedEmptyLoopReturnsErrClosed(t *testing.T) {
+	l := newLoop(t)
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := runWithTimeout(t, l); !errors.Is(err, ErrClosed) {
+		t.Fatalf("runWithTimeout() = %v, want %v", err, ErrClosed)
+	}
+}
+
+// Close drops the timers that have not fired: the heap is empty afterwards,
+// so the callbacks (and anything they captured) can be garbage collected.
+func TestCloseDropsPendingTimers(t *testing.T) {
+	l := newLoop(t)
+	l.AddTimeout(time.Millisecond, func() error { return nil })
+	l.AddInterval(time.Millisecond, func() error { return nil })
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.timers) != 0 {
+		t.Fatalf("len(l.timers) = %d, want 0", len(l.timers))
+	}
+}

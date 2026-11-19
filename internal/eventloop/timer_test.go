@@ -708,14 +708,9 @@ func TestAddTimerPanicsOnNilCallback(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			l := newLoop(t)
 			l.now = func() time.Duration { return 0 }
-			func() {
-				defer func() {
-					if r := recover(); r == nil {
-						t.Fatal("got no panic, want a panic")
-					}
-				}()
-				tt.add(l)
-			}()
+			if r := recoverPanic(func() { tt.add(l) }); r != panicNilCallback {
+				t.Fatalf("got panic %v, want %v", r, panicNilCallback)
+			}
 			if len(l.timers) != 0 {
 				t.Fatalf("got %d timers, want 0", len(l.timers))
 			}
@@ -724,5 +719,42 @@ func TestAddTimerPanicsOnNilCallback(t *testing.T) {
 				t.Fatalf("got ID %d, want 1", h.ID())
 			}
 		})
+	}
+}
+
+// AddTimeout and AddInterval panic on a closed loop instead of adding a timer
+// that can never fire. Nothing is added to the heap.
+func TestAddTimerAfterClosePanics(t *testing.T) {
+	l := newLoop(t)
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if r := recoverPanic(func() {
+		l.AddTimeout(time.Millisecond, func() error { return nil })
+	}); r != panicLoopClosed {
+		t.Fatalf("got panic %v, want %v", r, panicLoopClosed)
+	}
+	if r := recoverPanic(func() {
+		l.AddInterval(time.Millisecond, func() error { return nil })
+	}); r != panicLoopClosed {
+		t.Fatalf("got panic %v, want %v", r, panicLoopClosed)
+	}
+	if len(l.timers) != 0 {
+		t.Fatalf("len(l.timers) = %d, want 0", len(l.timers))
+	}
+}
+
+// CancelTimer on a closed loop is a no-op: it must not panic, and cancelling
+// a timer that was added before Close must not fail either.
+func TestCancelTimerAfterCloseIsNoOp(t *testing.T) {
+	l := newLoop(t)
+	tmr := l.AddTimeout(time.Millisecond, func() error { return nil })
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if r := recoverPanic(func() {
+		l.CancelTimer(tmr)
+	}); r != nil {
+		t.Fatalf("got panic %v, want nil", r)
 	}
 }

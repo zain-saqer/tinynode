@@ -451,9 +451,9 @@ func TestCloseDropsQueuedCallbacks(t *testing.T) {
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// TODO: also assert errors.Is(err, ErrClosed) once Run checks the closed
-	// flag (see the TODO above Loop.Close). Today Run returns nil here.
-	_ = runWithTimeout(t, l)
+	if err := runWithTimeout(t, l); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Run() = %v, want %v", err, ErrClosed)
+	}
 	if runs != 0 {
 		t.Fatalf("callback ran %d times, want 0", runs)
 	}
