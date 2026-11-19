@@ -85,10 +85,20 @@ func New() (*Loop, error) {
 // isAlive reports whether the loop still has work: a pending timer, a posted
 // callback, or a Pending whose Done callback has not run yet.
 func (l *Loop) isAlive() bool {
+	return l.aliveWith(l.hasTasks())
+}
+
+// aliveWith is isAlive for a caller that already read hasTasks, so it does not
+// take mu again.
+func (l *Loop) aliveWith(hasTasks bool) bool {
+	return len(l.timers) > 0 || hasTasks || l.holds > 0
+}
+
+// hasTasks reports whether posted callbacks are waiting to run.
+func (l *Loop) hasTasks() bool {
 	l.mu.Lock()
-	tasksCount := len(l.tasks)
-	l.mu.Unlock()
-	return len(l.timers) > 0 || tasksCount > 0 || l.holds > 0
+	defer l.mu.Unlock()
+	return len(l.tasks) > 0
 }
 
 // TODO: The "used after Close" contract is only half enforced:
@@ -145,14 +155,18 @@ func (l *Loop) Run() error {
 	if l.err != nil {
 		return l.err
 	}
-	for l.isAlive() {
+	for {
 		now := l.now()
 		if err := l.runDueTimers(now); err != nil {
 			l.err = err
 			return err
 		}
 
-		if !l.isAlive() {
+		// Read the queue (tasks) once: the same answer decides both whether the loop
+		// is alive and whether wait may block. A callback posted after this
+		// read is not lost, because Post wakes the poller.
+		hasTasks := l.hasTasks()
+		if !l.aliveWith(hasTasks) {
 			return nil
 		}
 
@@ -160,11 +174,9 @@ func (l *Loop) Run() error {
 		if len(l.timers) > 0 {
 			timeout = max(l.timers[0].runAt-l.now(), 0)
 		}
-		l.mu.Lock()
-		if len(l.tasks) > 0 {
+		if hasTasks {
 			timeout = 0
 		}
-		l.mu.Unlock()
 
 		if err := l.poller.wait(timeout, l.handleReady); err != nil {
 			l.err = fmt.Errorf("eventloop run: %w", err)
@@ -176,5 +188,4 @@ func (l *Loop) Run() error {
 			return err
 		}
 	}
-	return nil
 }
