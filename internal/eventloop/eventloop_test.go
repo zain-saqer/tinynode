@@ -172,3 +172,94 @@ func TestCloseDropsPendingTimers(t *testing.T) {
 		t.Fatalf("len(l.timers) = %d, want 0", len(l.timers))
 	}
 }
+
+// Run called from a Callback panics with panicLoopRunning instead of starting
+// a second loop over the same timer and task batches.
+func TestRunFromCallbackPanics(t *testing.T) {
+	l := newLoop(t)
+	offset := time.Duration(0)
+	l.now = func() time.Duration { return offset }
+	l.AddTimeout(time.Millisecond, func() error { return l.Run() })
+	offset += time.Millisecond
+	if r := recoverPanic(func() {
+		if err := l.Run(); err != nil {
+			t.Fatal(err)
+		}
+	}); r != panicLoopRunning {
+		t.Fatalf("panic value = %v, want %v", r, panicLoopRunning)
+	}
+	if l.running {
+		t.Errorf("l.running = %v, want false", l.running)
+	}
+}
+
+// Close called from a Callback returns ErrRunning and does nothing: the loop
+// keeps its timers and its poller, so a later timer still fires.
+func TestCloseFromCallbackReturnsErrRunning(t *testing.T) {
+	l := newLoop(t)
+	offset := time.Duration(0)
+	l.now = func() time.Duration { return offset }
+	l.AddTimeout(time.Millisecond, func() error {
+		offset += time.Millisecond
+		if err := l.Close(); !errors.Is(err, ErrRunning) {
+			t.Errorf("l.Close() = %v, want %v", err, ErrRunning)
+		}
+		return nil
+	})
+	runs := 0
+	l.AddTimeout(2*time.Millisecond, func() error { runs++; return nil })
+	offset += time.Millisecond
+	if err := runWithTimeout(t, l); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 {
+		t.Errorf("runs = %d, want 1", runs)
+	}
+}
+
+// The running flag is cleared when Run returns, on every path, so Close works
+// afterwards. The panic path is covered by TestRunFromCallbackPanics.
+func TestRunClearsRunningOnReturn(t *testing.T) {
+	errCallback := errors.New("callback error")
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T, l *Loop)
+		wantErr error
+	}{
+		{
+			name:  "normal return",
+			setup: func(t *testing.T, l *Loop) {},
+		},
+		{
+			name: "timer callback error",
+			setup: func(t *testing.T, l *Loop) {
+				l.AddTimeout(time.Millisecond, func() error { return errCallback })
+			},
+			wantErr: errCallback,
+		},
+		{
+			name: "posted callback error",
+			setup: func(t *testing.T, l *Loop) {
+				if err := l.Post(func() error { return errCallback }); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantErr: errCallback,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := newLoop(t)
+			offset := time.Duration(0)
+			l.now = func() time.Duration { return offset }
+			tt.setup(t, l)
+			offset += time.Millisecond
+			if err := runWithTimeout(t, l); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Run() = %v, want %v", err, tt.wantErr)
+			}
+			if err := l.Close(); err != nil {
+				t.Errorf("Close() = %v, want nil", err)
+			}
+		})
+	}
+}

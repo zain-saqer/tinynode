@@ -11,7 +11,11 @@ import (
 // ErrClosed is returned when a Loop is used after Close.
 var ErrClosed = errors.New("loop is closed")
 
+// ErrRunning is returned by Close when Run is running.
+var ErrRunning = errors.New("loop is running")
+
 const panicLoopClosed = "eventloop: loop is closed"
+const panicLoopRunning = "eventloop: loop is running"
 
 // Interest is the kind of readiness to watch a file descriptor for.
 type Interest int
@@ -55,7 +59,8 @@ type Loop struct {
 	timerBatch  []*timer   // the batch runDueTimers is running
 	taskBatch   []Callback // the batch runTasks is running; swapped with tasks each call
 	poller      poller
-	holds       int // number of Pendings whose Done callback has not run yet
+	holds       int  // number of Pendings whose Done callback has not run yet
+	running     bool // set while Run is running; guards against re-entry and Close from a Callback
 
 	// mu guards tasks and closed, which Post reads and writes from other
 	// goroutines. Holding mu in both Post and Close also keeps poller.wake
@@ -103,22 +108,17 @@ func (l *Loop) hasTasks() bool {
 	return len(l.tasks) > 0
 }
 
-// TODO: Enforce "Close must not be called while Run is running" and "Run must
-// not be called from a callback" with a running flag that Run sets on entry
-// and clears with defer:
-//   - Run while running: panic (always a programming error).
-//   - Close while running: return an ErrRunning error, like libuv's
-//     uv_loop_close returning UV_EBUSY. A callback that wants to shut the
-//     loop down will later use a separate Stop, like uv_stop.
-//
-// A plain bool also lets go test -race catch Close from another goroutine.
-
 // Close releases the loop's resources. Callbacks that were posted but have not
 // run yet and timers that have not fired are dropped. After Close, Run, Post
 // and Pending.Done return ErrClosed, AddTimeout, AddInterval and Hold panic,
-// and CancelTimer does nothing. Close must not be called while Run is running.
-// Calling Close more than once returns nil.
+// and CancelTimer does nothing. If Run is running (for example, Close is
+// called from a Callback), Close returns ErrRunning and does nothing, like
+// libuv's uv_loop_close returning UV_EBUSY. Calling Close more than once
+// returns nil.
 func (l *Loop) Close() error {
+	if l.running {
+		return fmt.Errorf("eventloop close: %w", ErrRunning)
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
@@ -157,14 +157,20 @@ func (l *Loop) handleReady(fd int, interest Interest) error {
 //
 // If a Callback returns an error, Run stops and returns that error unchanged.
 // After Run returns an error, the Loop must not be used again. Run returns
-// ErrClosed if the Loop is closed. Run must not be called from a Callback.
+// ErrClosed if the Loop is closed. Run panics if it is called while Run is
+// running, for example from a Callback.
 func (l *Loop) Run() error {
+	if l.running {
+		panic(panicLoopRunning)
+	}
 	if l.err != nil {
 		return l.err
 	}
 	if l.isClosed() {
 		return ErrClosed
 	}
+	l.running = true
+	defer func() { l.running = false }()
 	for {
 		now := l.now()
 		if err := l.runDueTimers(now); err != nil {
