@@ -139,3 +139,34 @@ func TestWaitResetsBatchStateOnReturn(t *testing.T) {
 		})
 	}
 }
+
+// invalidate marks only fd's read and write events dead, not the wake event,
+// which also has ident 0. The test sets the batch by hand: a current event at
+// index 0, then fd 0's read and write events and the wake event. invalidate(0)
+// must mark the read and write events dead and leave the wake event and the
+// current event alone. invalidate only touches events, i and n, so no kqueue
+// is needed.
+func TestInvalidateKeepsWakeEvent(t *testing.T) {
+	events := []unix.Kevent_t{
+		{Ident: 1, Filter: unix.EVFILT_WRITE}, // current event
+		{Ident: 0, Filter: unix.EVFILT_READ},
+		{Ident: 0, Filter: unix.EVFILT_WRITE},
+		{Ident: wakeIdent, Filter: unix.EVFILT_USER},
+	}
+	p := &kqueuePoller{events: events, i: 0, n: len(events)}
+	p.invalidate(0)
+	want := []struct {
+		name   string
+		filter int16
+	}{
+		{"current event", unix.EVFILT_WRITE},
+		{"fd 0 read event", deadFilter},
+		{"fd 0 write event", deadFilter},
+		{"wake event", unix.EVFILT_USER},
+	}
+	for j, w := range want {
+		if got := p.events[j].Filter; got != w.filter {
+			t.Errorf("%s filter = %d, want %d", w.name, got, w.filter)
+		}
+	}
+}
