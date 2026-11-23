@@ -551,6 +551,110 @@ func TestUnsubscribeAfterCloseFdRemovesSubscription(t *testing.T) {
 	}
 }
 
+// errInjected is the error failFirstRemovePoller returns from the first remove
+// of each fd and interest.
+var errInjected = errors.New("injected remove failure")
+
+// failFirstRemovePoller wraps a poller. The first remove of each fd and
+// interest returns errInjected without removing anything, like a remove that
+// failed in the kernel; later removes go to the wrapped poller. It counts all
+// remove calls.
+type failFirstRemovePoller struct {
+	poller
+	removeCalls int
+	calls       map[fdInterest]int
+}
+
+type fdInterest struct {
+	fd       int
+	interest Interest
+}
+
+func newFailFirstRemovePoller(inner poller) *failFirstRemovePoller {
+	return &failFirstRemovePoller{poller: inner, calls: make(map[fdInterest]int)}
+}
+
+func (p *failFirstRemovePoller) remove(fd int, interest Interest) error {
+	p.removeCalls++
+	k := fdInterest{fd, interest}
+	p.calls[k]++
+	if p.calls[k] == 1 {
+		return errInjected
+	}
+	return p.poller.remove(fd, interest)
+}
+
+// If poller.remove fails in Unsubscribe, the kernel keeps reporting the fd
+// although nothing is subscribed. handleReady must remove the registration
+// the first time such an event comes in, so the loop does not spin. The test
+// wraps l.poller in failFirstRemovePoller and counts remove calls: the failed
+// remove in Unsubscribe, then one cleanup remove from handleReady. A
+// removeCalls of 2 means the leftover registration was removed after one stale
+// event; 1 means handleReady never removed it. A short timer keeps Run alive
+// after the Unsubscribe, so stale events have time to come in.
+//
+// Two cases: "watcher deleted" removes the only interest, so the stale event
+// finds no watcher. "slot nil" then subscribes Readable on the same fd, so the
+// watcher comes back with its writable slot nil.
+func TestHandleReadyRemovesRegistrationLeftByFailedUnsubscribe(t *testing.T) {
+	t.Run("watcher deleted", func(t *testing.T) {
+		fd, _ := newSocketpair(t)
+		l := newTestLoop(t)
+		fp := newFailFirstRemovePoller(l.poller)
+		l.poller = fp
+		if err := l.Subscribe(fd, Writable, func() error {
+			return errors.New("callback ran after Unsubscribe")
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.Unsubscribe(fd, Writable); !errors.Is(err, errInjected) {
+			t.Fatalf("Unsubscribe() = %v, want the injected error", err)
+		}
+		l.AddTimeout(50*time.Millisecond, func() error { return nil })
+		if err := runWithTimeout(t, l); err != nil {
+			t.Fatal(err)
+		}
+		if fp.removeCalls != 2 {
+			t.Errorf("removeCalls = %d, want 2", fp.removeCalls)
+		}
+	})
+	t.Run("slot nil", func(t *testing.T) {
+		fd, _ := newSocketpair(t)
+		l := newTestLoop(t)
+		fp := newFailFirstRemovePoller(l.poller)
+		l.poller = fp
+		if err := l.Subscribe(fd, Writable, func() error {
+			return errors.New("callback ran after Unsubscribe")
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.Unsubscribe(fd, Writable); !errors.Is(err, errInjected) {
+			t.Fatalf("Unsubscribe() = %v, want the injected error", err)
+		}
+		// The peer never writes, so Readable never fires. It only brings the
+		// watcher back, with the writable slot nil.
+		if err := l.Subscribe(fd, Readable, func() error {
+			return errors.New("Readable callback ran, but fd is never readable")
+		}); err != nil {
+			t.Fatal(err)
+		}
+		l.AddTimeout(50*time.Millisecond, func() error {
+			if fp.removeCalls != 2 {
+				return fmt.Errorf("removeCalls = %d, want 2", fp.removeCalls)
+			}
+			// The first remove of Readable also fails, but Unsubscribe still
+			// drops the subscription, so Run can return.
+			if err := l.Unsubscribe(fd, Readable); !errors.Is(err, errInjected) {
+				return fmt.Errorf("Unsubscribe() = %v, want the injected error", err)
+			}
+			return nil
+		})
+		if err := runWithTimeout(t, l); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 // Errors and panics
 
 // Subscribe on an fd that is not open returns an error wrapping EBADF and

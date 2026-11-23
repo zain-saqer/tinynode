@@ -262,16 +262,29 @@ func (l *Loop) Unsubscribe(fd int, interest Interest) error {
 	return nil
 }
 
-// handleReady is called by poller.wait for each fd that is ready.
+// handleReady is called by poller.wait for each fd that is ready. It runs the
+// callback subscribed for fd and interest.
+//
+// If nothing is subscribed, it removes the registration from the poller. That
+// happens when poller.remove failed in Unsubscribe: the subscription is gone,
+// but the kernel keeps reporting fd, and without the remove the loop would
+// spin. libuv does the same in uv__io_poll. The error is ignored on purpose:
+// it is usually ENOENT (already removed), and if the remove fails again, the
+// next event retries it, which is better than failing Run over cleanup.
 func (l *Loop) handleReady(fd int, interest Interest) error {
-	w := l.watchers[fd]
-	if w == nil || !interest.valid() {
+	if !interest.valid() {
 		return nil
 	}
-	if cb := *w.slot(interest); cb != nil {
-		return cb()
+	var cb Callback
+	if w := l.watchers[fd]; w != nil {
+		cb = *w.slot(interest)
 	}
-	return nil
+	if cb == nil {
+		// Nothing is subscribed: remove the leftover registration (see above).
+		_ = l.poller.remove(fd, interest)
+		return nil
+	}
+	return cb()
 }
 
 // Run runs the loop until no timers, posted callbacks, Pendings or
