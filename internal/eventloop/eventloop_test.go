@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func newLoop(t *testing.T) *Loop {
+func newTestLoop(t *testing.T) *Loop {
 	t.Helper()
 	loop, err := New()
 	if err != nil {
@@ -37,7 +37,7 @@ func runWithTimeout(t *testing.T, loop *Loop) error {
 }
 
 func TestTimeoutRunInOrder(t *testing.T) {
-	loop := newLoop(t)
+	loop := newTestLoop(t)
 	offset := time.Millisecond
 	loop.now = func() time.Duration {
 		return offset
@@ -71,7 +71,7 @@ func TestTimeoutRunInOrder(t *testing.T) {
 }
 
 func TestRunWaitsForTimer(t *testing.T) {
-	loop := newLoop(t)
+	loop := newTestLoop(t)
 	fired := false
 	start := loop.Now()
 	loop.AddTimeout(20*time.Millisecond,
@@ -92,7 +92,7 @@ func TestRunWaitsForTimer(t *testing.T) {
 }
 
 func TestEventLoopStopsWhenTimerReturnsError(t *testing.T) {
-	loop := newLoop(t)
+	loop := newTestLoop(t)
 	offset := time.Duration(0)
 	loop.now = func() time.Duration {
 		return offset
@@ -112,7 +112,7 @@ func TestEventLoopStopsWhenTimerReturnsError(t *testing.T) {
 
 // Run returns right away on a loop with no timers.
 func TestRunReturnsOnEmptyLoop(t *testing.T) {
-	loop := newLoop(t)
+	loop := newTestLoop(t)
 	err := runWithTimeout(t, loop)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestRunReturnsOnEmptyLoop(t *testing.T) {
 // Run on a closed loop with a pending timer must fail with ErrClosed instead
 // of blocking or touching a reused fd.
 func TestRunAfterCloseReturnsErrClosed(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	l.now = func() time.Duration {
 		return 0
 	}
@@ -137,7 +137,7 @@ func TestRunAfterCloseReturnsErrClosed(t *testing.T) {
 
 // Calling Close twice on a Loop returns nil both times.
 func TestLoopCloseTwiceReturnsNil(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	if err := l.Close(); err != nil {
 		t.Fatalf("Close() = %v, want nil", err)
 	}
@@ -150,7 +150,7 @@ func TestLoopCloseTwiceReturnsNil(t *testing.T) {
 // not nil. Before the closed check, isAlive was false, so Run returned nil
 // without ever reaching the poller.
 func TestRunOnClosedEmptyLoopReturnsErrClosed(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestRunOnClosedEmptyLoopReturnsErrClosed(t *testing.T) {
 // Close drops the timers that have not fired: the heap is empty afterwards,
 // so the callbacks (and anything they captured) can be garbage collected.
 func TestCloseDropsPendingTimers(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	l.AddTimeout(time.Millisecond, func() error { return nil })
 	l.AddInterval(time.Millisecond, func() error { return nil })
 	if err := l.Close(); err != nil {
@@ -176,7 +176,7 @@ func TestCloseDropsPendingTimers(t *testing.T) {
 // Run called from a Callback panics with panicLoopRunning instead of starting
 // a second loop over the same timer and task batches.
 func TestRunFromCallbackPanics(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration { return offset }
 	l.AddTimeout(time.Millisecond, func() error { return l.Run() })
@@ -196,7 +196,7 @@ func TestRunFromCallbackPanics(t *testing.T) {
 // Close called from a Callback returns ErrRunning and does nothing: the loop
 // keeps its timers and its poller, so a later timer still fires.
 func TestCloseFromCallbackReturnsErrRunning(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration { return offset }
 	l.AddTimeout(time.Millisecond, func() error {
@@ -249,7 +249,7 @@ func TestRunClearsRunningOnReturn(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			l := newLoop(t)
+			l := newTestLoop(t)
 			offset := time.Duration(0)
 			l.now = func() time.Duration { return offset }
 			tt.setup(t, l)

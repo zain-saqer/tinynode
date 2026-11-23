@@ -88,6 +88,47 @@ func newPipe(t *testing.T) (r, w int) {
 	return fds[0], fds[1]
 }
 
+// newReadablePipe returns the read end of a new pipe that is registered with p
+// for Readable and holds one byte, so the next wait reports it. Both ends are
+// closed when the test ends.
+func newReadablePipe(t *testing.T, p poller) (r int) {
+	t.Helper()
+	r, w := newPipe(t)
+	if err := p.add(r, Readable); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unix.Write(w, []byte{0}); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// newSocketpair returns both ends of a connected Unix stream socket pair and
+// closes them when the test ends. Unlike a pipe, each end can be both readable
+// and writable.
+func newSocketpair(t *testing.T) (fd1, fd2 int) {
+	t.Helper()
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.SetNonblock(fds[0], true); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.SetNonblock(fds[1], true); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := unix.Close(fds[0]); err != nil {
+			t.Error(err)
+		}
+		if err := unix.Close(fds[1]); err != nil {
+			t.Error(err)
+		}
+	})
+	return fds[0], fds[1]
+}
+
 func TestWaitTimesOut(t *testing.T) {
 	p := newTestPoller(t)
 	err := waitWithTimeout(t, p, 10*time.Millisecond, emptyReady)
@@ -171,7 +212,7 @@ func TestReadTriggerDoesNotPersistAfterRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(buffer[:n]) != "test" {
-		t.Fatalf("read data was %q, expected %q", buffer[:n], "test")
+		t.Fatalf("read %q, want %q", buffer[:n], "test")
 	}
 	got = nil
 	if err := waitWithTimeout(t, p, 10*time.Millisecond, recordReady(&got)); err != nil {
@@ -230,23 +271,11 @@ func TestAddInvalidFdReturnsError(t *testing.T) {
 func TestWaitReturnsReadyError(t *testing.T) {
 	testError := errors.New("test error")
 	p := newTestPoller(t)
-	r1, w1 := newPipe(t)
-	r2, w2 := newPipe(t)
-	if err := p.add(r1, Readable); err != nil {
-		t.Fatal(err)
-	}
-	if err := p.add(r2, Readable); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := unix.Write(w1, []byte(`x`)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := unix.Write(w2, []byte(`x`)); err != nil {
-		t.Fatal(err)
-	}
-	runs := 0
+	newReadablePipe(t, p)
+	newReadablePipe(t, p)
+	calls := 0
 	ready := func(fd int, interest Interest) error {
-		runs++
+		calls++
 		return testError
 	}
 	err := waitWithTimeout(t, p, 50*time.Millisecond, ready)
@@ -256,8 +285,8 @@ func TestWaitReturnsReadyError(t *testing.T) {
 	if !errors.Is(err, testError) {
 		t.Fatalf("wait returned %v, want %v", err, testError)
 	}
-	if runs != 1 {
-		t.Fatalf("ready was called %d times, want 1", runs)
+	if calls != 1 {
+		t.Fatalf("ready was called %d times, want 1", calls)
 	}
 }
 
@@ -332,7 +361,7 @@ func TestCloseWriteEndReportsReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n != 0 {
-		t.Fatalf("expected 0 bytes, got %d", n)
+		t.Fatalf("read %d bytes, want 0", n)
 	}
 }
 
@@ -355,8 +384,120 @@ func TestPollerMethodsAfterCloseReturnErrClosed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := tt.f(); !errors.Is(err, ErrClosed) {
-				t.Fatalf("expected ErrClosed, got %v", err)
+				t.Fatalf("%s() = %v, want %v", tt.name, err, ErrClosed)
 			}
 		})
 	}
+}
+
+// invalidate, called from ready while wait runs, skips the events still in the
+// batch for that fd and keeps the events for other fds.
+// Setup: five pipes with data, so one wait returns five events. The third
+// ready call invalidates one fd that has not been reported yet; wait must then
+// report exactly four calls, without the invalidated fd. Invalidating in a
+// later call, not the first, makes the batch index non-zero, which catches an
+// invalidate that scans the wrong part of the batch.
+func TestInvalidateSkipsOnlyThatFd(t *testing.T) {
+	p := newTestPoller(t)
+	rs := make([]int, 5)
+	for i := range rs {
+		rs[i] = newReadablePipe(t, p)
+	}
+	invalidatedFd := -1
+	calls := 0
+	var got []readyCall
+	ready := func(fd int, interest Interest) error {
+		calls++
+		if !slices.Contains(rs, fd) {
+			t.Fatalf("fd = %d, want one of %v", fd, rs)
+		}
+		if interest != Readable {
+			t.Fatalf("interest = %v, want %v", interest, Readable)
+		}
+		got = append(got, readyCall{fd, interest})
+		if calls == 3 {
+			for _, r := range rs {
+				if !slices.Contains(got, readyCall{r, Readable}) {
+					invalidatedFd = r
+					p.invalidate(invalidatedFd)
+					break
+				}
+			}
+		}
+		return nil
+	}
+	if err := p.wait(0, ready); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("got %d ready calls, want 4", len(got))
+	}
+	for _, r := range rs {
+		if r == invalidatedFd && slices.Contains(got, readyCall{r, Readable}) {
+			t.Errorf("invalidated fd %d was reported, calls = %v", r, got)
+		}
+		if r != invalidatedFd && !slices.Contains(got, readyCall{r, Readable}) {
+			t.Errorf("fd %d not reported, calls = %v", r, got)
+		}
+	}
+}
+
+// invalidate drops both the Readable and the Writable event of the fd when
+// both are in the batch.
+func TestInvalidateSkipsBothInterestsOfFd(t *testing.T) {
+	p := newTestPoller(t)
+	fd1, fd2 := newSocketpair(t)
+	if err := p.add(fd1, Readable); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.add(fd1, Writable); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unix.Write(fd2, []byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	var got []readyCall
+	if err := p.wait(0, recordReady(&got)); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []readyCall{{fd1, Writable}, {fd1, Readable}}) &&
+		!slices.Equal(got, []readyCall{{fd1, Readable}, {fd1, Writable}}) {
+		t.Fatalf("want Readable and Writable for fd %d, in either order", fd1)
+	}
+	calls := 0
+	ready := func(fd int, interest Interest) error {
+		if fd != fd1 {
+			t.Fatalf("fd = %d, want %d", fd, fd1)
+		}
+		calls++
+		p.invalidate(fd1)
+		return nil
+	}
+	if err := p.wait(0, ready); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("got %d ready calls, want 1", calls)
+	}
+}
+
+// invalidate does nothing when no wait is running: before the first wait and
+// after wait returns. The next wait still reports the fd.
+func TestInvalidateOutsideWaitDoesNothing(t *testing.T) {
+	p := newTestPoller(t)
+	r := newReadablePipe(t, p)
+	p.invalidate(r)
+	var got []readyCall
+	if err := p.wait(0, recordReady(&got)); err != nil {
+		t.Fatal(err)
+	}
+	assertReadyCalls(t, got, readyCall{r, Readable})
+	p.invalidate(r)
+	// The byte in the pipe was never read, and events are level-triggered, so
+	// the next wait reports r again unless the invalidate above dropped it.
+	got = nil
+	if err := p.wait(0, recordReady(&got)); err != nil {
+		t.Fatal(err)
+	}
+	assertReadyCalls(t, got, readyCall{r, Readable})
 }

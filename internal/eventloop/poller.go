@@ -18,6 +18,17 @@ type poller interface {
 	wait(timeout time.Duration, ready func(fd int, interest Interest) error) error
 	close() error
 	add(fd int, interest Interest) error
+	// remove unregisters fd for interest. It returns nil if fd is not
+	// registered for interest or is already closed (kqueue reports ENOENT,
+	// epoll reports EBADF or ENOENT), so Loop.Unsubscribe behaves the same on
+	// every platform.
 	remove(fd int, interest Interest) error
 	wake() error
+	// invalidate keeps wait from reporting the events for fd that are still
+	// waiting in the batch it is processing. Loop calls it when the last
+	// subscription on fd is removed, so that if fd is closed and its number
+	// reused, the new fd never gets the old fd's events. Outside wait there
+	// is no batch, and invalidate does nothing. It makes no syscall, so it
+	// cannot fail.
+	invalidate(fd int)
 }

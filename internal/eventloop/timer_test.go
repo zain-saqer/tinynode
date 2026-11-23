@@ -11,7 +11,7 @@ import (
 // Clamping
 
 func TestAddTimeoutMaxBoundary(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	l.now = func() time.Duration {
 		return 0
 	}
@@ -45,7 +45,7 @@ func TestAddTimeoutClampsNonPositiveTimeout(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			l := newLoop(t)
+			l := newTestLoop(t)
 			l.now = func() time.Duration {
 				return 0
 			}
@@ -72,7 +72,7 @@ func TestAddTimeoutClampsNonPositiveTimeout(t *testing.T) {
 
 // setTimeout(a, 0) then setTimeout(b, -5): both clamp to 1ms, so a runs first.
 func TestClampedTimeoutsRunInInsertionOrder(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	l.now = func() time.Duration {
 		return 0
 	}
@@ -111,7 +111,7 @@ func runDueTimersWithTimeout(t *testing.T, l *Loop, now time.Duration) error {
 // A 0ms interval with a frozen clock fires once per runDueTimers pass
 // instead of looping forever.
 func TestAddIntervalClampsZeroTimeout(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	l.now = func() time.Duration {
 		return 0
 	}
@@ -129,7 +129,7 @@ func TestAddIntervalClampsZeroTimeout(t *testing.T) {
 }
 
 func TestAddTimeoutHugeTimeoutDoesNotOverflow(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	l.now = func() time.Duration {
 		return 0
 	}
@@ -152,7 +152,7 @@ func TestAddTimeoutHugeTimeoutDoesNotOverflow(t *testing.T) {
 // Ordering
 
 func TestRunDueTimersRunsDueTimersInOrder(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration {
 		return offset
@@ -181,7 +181,7 @@ func TestRunDueTimersRunsDueTimersInOrder(t *testing.T) {
 // A timeout added from inside another timer's callback is scheduled from
 // Now(), keeps the loop alive, and runs on a later pass, not in the same one.
 func TestAddTimeoutWorksInsideAddTimeoutCallback(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration {
 		return offset
@@ -227,7 +227,7 @@ func TestAddTimeoutWorksInsideAddTimeoutCallback(t *testing.T) {
 
 // runDueTimers reuses its batch buffer and doesn't allocate once warmed up.
 func TestRunDueTimersDoesNotAllocate(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration {
 		return offset
@@ -248,7 +248,7 @@ func TestRunDueTimersDoesNotAllocate(t *testing.T) {
 
 // Several timers with the same deadline run in the order they were added.
 func TestEqualDeadlinesRunInInsertionOrder(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration {
 		return offset
@@ -277,7 +277,7 @@ func TestEqualDeadlinesRunInInsertionOrder(t *testing.T) {
 // Repeating
 
 func TestRunDueTimersReschedulesRepeatingTimer(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	runs := 0
 	l.now = func() time.Duration {
@@ -299,7 +299,7 @@ func TestRunDueTimersReschedulesRepeatingTimer(t *testing.T) {
 }
 
 func TestRescheduledIntervalRunsAfterTimersWithSameDeadline(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration {
 		return offset
@@ -330,7 +330,7 @@ func TestRescheduledIntervalRunsAfterTimersWithSameDeadline(t *testing.T) {
 // Errors
 
 func TestRunDueTimersStopsWhenTimerReturnsError(t *testing.T) {
-	loop := newLoop(t)
+	loop := newTestLoop(t)
 	expectedError := errors.New("timer error")
 	loop.now = func() time.Duration {
 		return 0
@@ -367,31 +367,31 @@ func TestCancelTimerNoOpOnInvalidTimers(t *testing.T) {
 		}
 	}
 	t.Run("nil", func(t *testing.T) {
-		loop := newLoop(t)
+		loop := newTestLoop(t)
 		loop.now = func() time.Duration { return 0 }
 		h := loop.AddTimeout(time.Millisecond, func() error { return nil })
 		loop.CancelTimer(nil)
 		assertOnlyTimer(t, loop, h.t)
 	})
 	t.Run("no *timer inside", func(t *testing.T) {
-		loop := newLoop(t)
+		loop := newTestLoop(t)
 		loop.now = func() time.Duration { return 0 }
 		h := loop.AddTimeout(time.Millisecond, func() error { return nil })
 		loop.CancelTimer(&Timer{})
 		assertOnlyTimer(t, loop, h.t)
 	})
 	t.Run("other loop Timer", func(t *testing.T) {
-		loop := newLoop(t)
+		loop := newTestLoop(t)
 		loop.now = func() time.Duration { return 0 }
 		h1 := loop.AddTimeout(time.Millisecond, func() error { return nil })
-		loop2 := newLoop(t)
+		loop2 := newTestLoop(t)
 		h2 := loop2.AddTimeout(time.Millisecond, func() error { return nil })
 		loop.CancelTimer(h2)
 		assertOnlyTimer(t, loop, h1.t)
 	})
 
 	t.Run("zero Timer on empty loop", func(t *testing.T) {
-		loop := newLoop(t)
+		loop := newTestLoop(t)
 		loop.now = func() time.Duration { return 0 }
 		loop.CancelTimer(&Timer{})
 		if len(loop.timers) != 0 {
@@ -400,10 +400,10 @@ func TestCancelTimerNoOpOnInvalidTimers(t *testing.T) {
 	})
 
 	t.Run("other loop Timer past heap end", func(t *testing.T) {
-		loop := newLoop(t)
+		loop := newTestLoop(t)
 		loop.now = func() time.Duration { return 0 }
 		h := loop.AddTimeout(time.Millisecond, func() error { return nil })
-		loop2 := newLoop(t)
+		loop2 := newTestLoop(t)
 		loop2.now = func() time.Duration { return 0 }
 		loop2.CancelTimer(h)
 		if len(loop2.timers) != 0 {
@@ -420,9 +420,9 @@ func TestCancelTimerNoOpOnInvalidTimers(t *testing.T) {
 // cancels interval A through loop2 while A is popped and waiting in loop1's
 // batch, and A still runs and is rescheduled.
 func TestCancelTimerDoesNotChangeOtherLoopTimers(t *testing.T) {
-	loop1 := newLoop(t)
+	loop1 := newTestLoop(t)
 	loop1.now = func() time.Duration { return 0 }
-	loop2 := newLoop(t)
+	loop2 := newTestLoop(t)
 	loop2.now = func() time.Duration { return 0 }
 	runs := 0
 	var intervalA *Timer
@@ -452,7 +452,7 @@ func TestCancelTimerDoesNotChangeOtherLoopTimers(t *testing.T) {
 // A timer canceled before its deadline never runs, and the loop is no
 // longer alive because of it.
 func TestCancelTimerBeforeItFires(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	l.now = func() time.Duration {
 		return 0
 	}
@@ -475,7 +475,7 @@ func TestCancelTimerBeforeItFires(t *testing.T) {
 
 // An interval that cancels itself inside its callback is not rescheduled.
 func TestCancelTimerFromOwnCallback(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration {
 		return offset
@@ -505,7 +505,7 @@ func TestCancelTimerFromOwnCallback(t *testing.T) {
 // A timer that cancels another due timer in the same pass stops it from
 // running.
 func TestCancelTimerFromAnotherTimersCallback(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration {
 		return offset
@@ -529,7 +529,7 @@ func TestCancelTimerFromAnotherTimersCallback(t *testing.T) {
 
 // Cancelling the same timer twice is a no-op the second time.
 func TestCancelTimerTwice(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration {
 		return offset
@@ -552,7 +552,7 @@ func TestCancelTimerTwice(t *testing.T) {
 // Cancelling a timeout that has already fired is a no-op and leaves the
 // other timers in the heap alone.
 func TestCancelTimerAfterItFired(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration {
 		return offset
@@ -585,7 +585,7 @@ func TestCancelTimerAfterItFired(t *testing.T) {
 // after the heap has reordered since the copy was made, and leaves the other
 // timers alone.
 func TestCancelTimerCopyCancelsSameTimer(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	l.now = func() time.Duration {
 		return 0
 	}
@@ -618,7 +618,7 @@ func TestCancelTimerCopyCancelsSameTimer(t *testing.T) {
 // ID returns 1, 2, … in creation order for timers on one loop, starts again
 // at 1 on another loop, and returns 0 for a nil or zero Timer.
 func TestTimerID(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	zeroTimer := &Timer{}
 	if zeroTimer.ID() != 0 {
 		t.Fatalf("got ID %d, want 0", zeroTimer.ID())
@@ -635,7 +635,7 @@ func TestTimerID(t *testing.T) {
 	if tm2.ID() != 2 {
 		t.Fatalf("got ID %d, want 2", tm2.ID())
 	}
-	l2 := newLoop(t)
+	l2 := newTestLoop(t)
 	tm3 := l2.AddTimeout(time.Millisecond, func() error { return nil })
 	if tm3.ID() != 1 {
 		t.Fatalf("got ID %d, want 1", tm3.ID())
@@ -647,11 +647,11 @@ func TestTimerID(t *testing.T) {
 // Two loops running on two goroutines don't share timer counters
 // (run with -race).
 func TestLoopsRunConcurrently(t *testing.T) {
-	l1 := newLoop(t)
+	l1 := newTestLoop(t)
 	l1.now = func() time.Duration {
 		return 0
 	}
-	l2 := newLoop(t)
+	l2 := newTestLoop(t)
 	l2.now = func() time.Duration {
 		return 0
 	}
@@ -706,7 +706,7 @@ func TestAddTimerPanicsOnNilCallback(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			l := newLoop(t)
+			l := newTestLoop(t)
 			l.now = func() time.Duration { return 0 }
 			if r := recoverPanic(func() { tt.add(l) }); r != panicNilCallback {
 				t.Fatalf("got panic %v, want %v", r, panicNilCallback)
@@ -725,7 +725,7 @@ func TestAddTimerPanicsOnNilCallback(t *testing.T) {
 // AddTimeout and AddInterval panic on a closed loop instead of adding a timer
 // that can never fire. Nothing is added to the heap.
 func TestAddTimerAfterClosePanics(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -747,7 +747,7 @@ func TestAddTimerAfterClosePanics(t *testing.T) {
 // CancelTimer on a closed loop is a no-op: it must not panic, and cancelling
 // a timer that was added before Close must not fail either.
 func TestCancelTimerAfterCloseIsNoOp(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	tmr := l.AddTimeout(time.Millisecond, func() error { return nil })
 	if err := l.Close(); err != nil {
 		t.Fatal(err)

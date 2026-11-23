@@ -28,6 +28,11 @@ const (
 	Writable
 )
 
+// valid reports whether i is one of the defined interests.
+func (i Interest) valid() bool {
+	return i == Readable || i == Writable
+}
+
 // String returns the name of the interest, or Interest(n) for an unknown
 // value.
 func (i Interest) String() string {
@@ -42,10 +47,33 @@ func (i Interest) String() string {
 }
 
 // Callback is a function that the Loop runs on the goroutine running Run.
-// AddTimeout and AddInterval run one when a timer is due; Post and
-// Pending.Done queue one to run in the next iteration. If a Callback returns
-// an error, Run stops and returns that error unchanged.
+// AddTimeout and AddInterval run one when a timer is due; Subscribe runs one
+// when a file descriptor is ready; Post and Pending.Done queue one to run in
+// the next iteration. If a Callback returns an error, Run stops and returns
+// that error unchanged.
 type Callback func() error
+
+// watcher holds the callbacks subscribed for one file descriptor. A nil field
+// means that interest is not subscribed. The Loop deletes a watcher once both
+// fields are nil.
+type watcher struct {
+	readable Callback
+	writable Callback
+}
+
+// slot returns a pointer to the field that holds the callback for interest, so
+// callers can read and set it in one place. It panics on an unknown interest;
+// callers check interest.valid first.
+func (w *watcher) slot(interest Interest) *Callback {
+	switch interest {
+	case Readable:
+		return &w.readable
+	case Writable:
+		return &w.writable
+	default:
+		panic(fmt.Sprintf("eventloop: watcher.slot: unknown interest %v", interest))
+	}
+}
 
 // Loop represents an event loop. A Loop is not safe for concurrent use, except
 // for Post and Pending.Done, which may be called from any goroutine.
@@ -61,6 +89,7 @@ type Loop struct {
 	poller      poller
 	holds       int  // number of Pendings whose Done callback has not run yet
 	running     bool // set while Run is running; guards against re-entry and Close from a Callback
+	watchers    map[int]*watcher
 
 	// mu guards tasks and closed, which Post reads and writes from other
 	// goroutines. Holding mu in both Post and Close also keeps poller.wake
@@ -82,15 +111,17 @@ func New() (*Loop, error) {
 		return nil, fmt.Errorf("eventloop new: %w", err)
 	}
 	loop := &Loop{
-		now:    sinceStart,
-		poller: p,
+		now:      sinceStart,
+		poller:   p,
+		watchers: make(map[int]*watcher),
 	}
 	heap.Init(&loop.timers)
 	return loop, nil
 }
 
 // isAlive reports whether the loop still has work: a pending timer, a posted
-// callback, or a Pending whose Done callback has not run yet.
+// callback, a Pending whose Done callback has not run yet, or an fd
+// subscription.
 func (l *Loop) isAlive() bool {
 	return l.aliveWith(l.hasTasks())
 }
@@ -98,7 +129,7 @@ func (l *Loop) isAlive() bool {
 // aliveWith is isAlive for a caller that already read hasTasks, so it does not
 // take mu again.
 func (l *Loop) aliveWith(hasTasks bool) bool {
-	return len(l.timers) > 0 || hasTasks || l.holds > 0
+	return len(l.timers) > 0 || hasTasks || l.holds > 0 || len(l.watchers) > 0
 }
 
 // hasTasks reports whether posted callbacks are waiting to run.
@@ -109,12 +140,13 @@ func (l *Loop) hasTasks() bool {
 }
 
 // Close releases the loop's resources. Callbacks that were posted but have not
-// run yet and timers that have not fired are dropped. After Close, Run, Post
-// and Pending.Done return ErrClosed, AddTimeout, AddInterval and Hold panic,
-// and CancelTimer does nothing. If Run is running (for example, Close is
-// called from a Callback), Close returns ErrRunning and does nothing, like
-// libuv's uv_loop_close returning UV_EBUSY. Calling Close more than once
-// returns nil.
+// run yet, timers that have not fired and subscriptions are dropped. The
+// subscribed file descriptors are not closed, because the caller owns them.
+// After Close, Run, Post and Pending.Done return ErrClosed, AddTimeout,
+// AddInterval and Hold panic, CancelTimer does nothing, and Unsubscribe
+// returns nil. If Run is running (for example, Close is called from a
+// Callback), Close returns ErrRunning and does nothing, like libuv's
+// uv_loop_close returning UV_EBUSY. Calling Close more than once returns nil.
 func (l *Loop) Close() error {
 	if l.running {
 		return fmt.Errorf("eventloop close: %w", ErrRunning)
@@ -131,6 +163,7 @@ func (l *Loop) Close() error {
 		tmr.canceled = true
 	}
 	l.timers = nil
+	l.watchers = nil
 	if err := l.poller.close(); err != nil {
 		return fmt.Errorf("eventloop close: %w", err)
 	}
@@ -145,15 +178,106 @@ func (l *Loop) isClosed() bool {
 	return l.closed
 }
 
-// handleReady is called by poller.wait for each fd that is ready. It is a stub
-// until fds can be registered with handlers.
-func (l *Loop) handleReady(fd int, interest Interest) error {
+// Subscribe arranges for cb to run on the loop's goroutine each time fd is
+// ready for interest. Call it before Run or from a Callback. Subscribing the
+// same fd and interest again replaces the callback.
+//
+// A subscription keeps Run running until it is removed with Unsubscribe.
+//
+// Subscriptions are level-triggered: cb runs again on every iteration for as
+// long as fd stays ready. Unsubscribe Writable when there is nothing left to
+// write, or the loop spins. Readiness is only a hint: a read or write in cb
+// can still fail with EAGAIN.
+//
+// cb is a Callback, so an error it returns stops Run. Return an error only for
+// a fatal failure. cb must handle expected I/O errors, such as ECONNRESET,
+// EPIPE and EAGAIN, itself.
+//
+// If Subscribe returns an error, for example EBADF because fd is not open,
+// nothing is subscribed. Subscribe panics if the loop is closed.
+func (l *Loop) Subscribe(fd int, interest Interest, cb Callback) error {
+	if !interest.valid() {
+		panic(fmt.Sprintf("eventloop: Subscribe: unknown interest %v", interest))
+	}
+	if cb == nil {
+		panic(panicNilCallback)
+	}
+	if l.isClosed() {
+		panic(panicLoopClosed)
+	}
+	if err := l.poller.add(fd, interest); err != nil {
+		return fmt.Errorf("eventloop subscribe: %w", err)
+	}
+	w := l.watchers[fd]
+	if w == nil {
+		w = &watcher{}
+		l.watchers[fd] = w
+	}
+	*w.slot(interest) = cb
 	return nil
 }
 
-// Run runs the loop until no timers, posted callbacks or Pendings are left.
-// Each iteration runs the due timers, waits for fd events, a wake from Post,
-// or the next timer, and then runs the posted callbacks.
+// Unsubscribe removes the subscription for fd and interest. A subscription for
+// the other interest on the same fd is not affected. Call it before Run or from
+// a Callback. Once no subscriptions are left, they no longer keep Run running.
+//
+// After Unsubscribe returns, the callback never runs again for that
+// subscription.
+//
+// Unsubscribe fd before closing it. Closing fd drops its registration in the
+// kernel but not the subscription, so the callback never runs again and the
+// subscription keeps Run running forever. And once fd is closed, the kernel can
+// give its number to a new file or socket, and a late Unsubscribe would remove
+// that one's registration instead.
+//
+// Unsubscribing something that is not subscribed does nothing and returns nil,
+// and so does Unsubscribe on a closed loop. If fd is already closed, the
+// subscription is still removed and Unsubscribe returns nil on every platform:
+// kqueue drops a closed fd's registrations itself and cannot tell it apart
+// from an fd that was never registered. For any other error from the kernel,
+// the subscription is still removed and the error is returned.
+func (l *Loop) Unsubscribe(fd int, interest Interest) error {
+	if !interest.valid() {
+		panic(fmt.Sprintf("eventloop: Unsubscribe: unknown interest %v", interest))
+	}
+	if l.isClosed() {
+		return nil
+	}
+	w := l.watchers[fd]
+	if w == nil {
+		return nil
+	}
+	cb := w.slot(interest)
+	if *cb == nil {
+		return nil
+	}
+	*cb = nil
+	if w.readable == nil && w.writable == nil {
+		delete(l.watchers, fd)
+		l.poller.invalidate(fd)
+	}
+	if err := l.poller.remove(fd, interest); err != nil {
+		return fmt.Errorf("eventloop unsubscribe: %w", err)
+	}
+	return nil
+}
+
+// handleReady is called by poller.wait for each fd that is ready.
+func (l *Loop) handleReady(fd int, interest Interest) error {
+	w := l.watchers[fd]
+	if w == nil || !interest.valid() {
+		return nil
+	}
+	if cb := *w.slot(interest); cb != nil {
+		return cb()
+	}
+	return nil
+}
+
+// Run runs the loop until no timers, posted callbacks, Pendings or
+// subscriptions are left. Each iteration runs the due timers, waits for fd
+// events, a wake from Post, or the next timer, and then runs the posted
+// callbacks.
 //
 // If a Callback returns an error, Run stops and returns that error unchanged.
 // After Run returns an error, the Loop must not be used again. Run returns
@@ -194,8 +318,11 @@ func (l *Loop) Run() error {
 			timeout = 0
 		}
 
+		// Not wrapped: wait returns a Callback's error from handleReady, and
+		// Run must return that unchanged. kevent errors already carry
+		// "poller wait:".
 		if err := l.poller.wait(timeout, l.handleReady); err != nil {
-			l.err = fmt.Errorf("eventloop run: %w", err)
+			l.err = err
 			return l.err
 		}
 

@@ -9,12 +9,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// kqueuePoller is the poller for macOS and the BSDs, built on kqueue(2).
 type kqueuePoller struct {
 	kq     int
-	events []unix.Kevent_t
+	events []unix.Kevent_t // buffer that kevent fills with ready events
+	// While wait runs, events[:n] is the current batch and events[i] is the
+	// event being reported. Both are 0 when wait is not running.
+	i int
+	n int
 }
 
 const wakeIdent = uint64(0)
+
+// deadFilter marks an event in the current batch as invalidated, so wait
+// skips it. 0 is not a real kqueue filter (the EVFILT_* values are negative),
+// so it cannot clash with an event from the kernel.
+const deadFilter = 0
 
 func newPoller() (poller, error) {
 	return newKqueuePoller()
@@ -113,6 +123,23 @@ func (p *kqueuePoller) wake() error {
 	return nil
 }
 
+// invalidate marks the events for fd after the current one as dead. kqueue
+// reports read and write as separate events, so the current event never needs
+// marking: it is already being reported.
+func (p *kqueuePoller) invalidate(fd int) {
+	if p.n == 0 {
+		return
+	}
+	for j := p.i + 1; j < p.n; j++ {
+		ev := &p.events[j]
+		// kqueue identifies an event by ident and filter. Match only fd's read
+		// and write events: the wake event also has ident 0, like stdin.
+		if ev.Ident == uint64(fd) && (ev.Filter == unix.EVFILT_READ || ev.Filter == unix.EVFILT_WRITE) {
+			ev.Filter = deadFilter
+		}
+	}
+}
+
 func (p *kqueuePoller) wait(timeout time.Duration, ready func(fd int, interest Interest) error) error {
 	if ready == nil {
 		panic("eventloop: ready function is nil")
@@ -125,15 +152,20 @@ func (p *kqueuePoller) wait(timeout time.Duration, ready func(fd int, interest I
 		t := unix.NsecToTimespec(timeout.Nanoseconds())
 		ts = &t
 	}
-	n, err := unix.Kevent(p.kq, nil, p.events, ts)
+	var err error
+	defer func() {
+		p.i = 0
+		p.n = 0
+	}()
+	p.n, err = unix.Kevent(p.kq, nil, p.events, ts)
 	if err != nil {
 		if errors.Is(err, unix.EINTR) {
 			return nil
 		}
 		return fmt.Errorf("poller wait: %w", os.NewSyscallError("kevent", err))
 	}
-	for i := range n {
-		event := &p.events[i]
+	for p.i = range p.n {
+		event := &p.events[p.i]
 		var interest Interest
 		switch event.Filter {
 		case unix.EVFILT_READ:
@@ -142,6 +174,8 @@ func (p *kqueuePoller) wait(timeout time.Duration, ready func(fd int, interest I
 			interest = Writable
 		// wake has no fd to report; it only interrupts kevent
 		case unix.EVFILT_USER:
+			continue
+		case deadFilter:
 			continue
 		default:
 			continue

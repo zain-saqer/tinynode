@@ -31,7 +31,7 @@ func recoverPanic(f func()) (r any) {
 // With no timers and one hold, Run blocks. A worker goroutine posts via the
 // hold after ~50 ms, the task runs, and Run returns.
 func TestHoldBlocksTheLoopThenUnhold(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	runs := 0
 	result := make(chan error, 1)
 	p := l.Hold()
@@ -57,7 +57,7 @@ func TestHoldBlocksTheLoopThenUnhold(t *testing.T) {
 // Releasing a hold twice must not make the hold count negative: a second,
 // still active hold must keep the loop alive.
 func TestDoneTwiceDoesNotReleaseOtherHolds(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	h1 := l.Hold()
 	h2 := l.Hold()
 	firstH1DoneRuns := 0
@@ -97,7 +97,7 @@ func TestDoneTwiceDoesNotReleaseOtherHolds(t *testing.T) {
 // Callbacks posted before Run keep the loop alive and run, even with no
 // timers and no holds.
 func TestPostBeforeRunRunsCallback(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	runs := 0
 	cb := func() error {
 		runs++
@@ -117,7 +117,7 @@ func TestPostBeforeRunRunsCallback(t *testing.T) {
 // Posted callbacks run in the order they were posted, and all of them run
 // (not only the first of the batch).
 func TestPostRunsCallbacksInOrder(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	var events []int
 	if err := l.Post(func() error { events = append(events, 1); return nil }); err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestPostRunsCallbacksInOrder(t *testing.T) {
 // Post from another goroutine must wake a Run that is blocked waiting for a
 // far-away timer.
 func TestPostWakesBlockedRun(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	l.now = func() time.Duration { return 0 }
 	timerRuns := 0
 	tmr := l.AddTimeout(5*time.Second, func() error { timerRuns++; return nil })
@@ -176,7 +176,7 @@ func TestPostWakesBlockedRun(t *testing.T) {
 // Many goroutines posting at the same time: every callback runs exactly once.
 // Run with -race.
 func TestConcurrentPostsAllRunOnce(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	n := 50
 	m := 20
 	runs := make([]int, n*m)
@@ -220,7 +220,7 @@ func TestConcurrentPostsAllRunOnce(t *testing.T) {
 // the current batch, so a callback that keeps re-posting itself cannot block
 // timers.
 func TestRepostingCallbackDoesNotStarveTimers(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	offset := time.Duration(0)
 	l.now = func() time.Duration { return offset }
 	timeoutRuns := 0
@@ -255,7 +255,7 @@ func TestRepostingCallbackDoesNotStarveTimers(t *testing.T) {
 // An error from a posted callback stops Run and is returned unchanged
 // (errors.Is and the message match, with no "eventloop" prefix).
 func TestPostedCallbackErrorStopsRun(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	sentinel := errors.New("sentinel error")
 	if err := l.Post(func() error { return sentinel }); err != nil {
 		t.Fatal(err)
@@ -279,7 +279,7 @@ func TestPostedCallbackErrorStopsRun(t *testing.T) {
 // The error from a callback passed to Pending.Done also stops Run unchanged,
 // and the hold is still released.
 func TestDoneCallbackErrorStopsRun(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	sentinelErr := errors.New("sentinel error")
 	p := l.Hold()
 	result := make(chan error, 1)
@@ -300,7 +300,7 @@ func TestDoneCallbackErrorStopsRun(t *testing.T) {
 
 // Post after Close returns ErrClosed and the callback never runs.
 func TestPostAfterCloseReturnsErrClosed(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func TestPostAfterCloseReturnsErrClosed(t *testing.T) {
 
 // Done after Close returns an error wrapping ErrClosed.
 func TestDoneAfterCloseReturnsErrClosed(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	p := l.Hold()
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
@@ -331,7 +331,7 @@ func TestDoneAfterCloseReturnsErrClosed(t *testing.T) {
 // Close and Post racing from different goroutines must not race on the queue
 // or call poller.wake after poller.close. Run with -race.
 func TestCloseConcurrentWithPost(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	n := 10
 	postResult := make(chan error, 1)
 	go func() {
@@ -358,7 +358,7 @@ func TestCloseConcurrentWithPost(t *testing.T) {
 // Copies of a Pending share one hold: Done on a copy releases it, and Done on
 // the original afterwards fails.
 func TestPendingCopiesShareHold(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	firstDoneRuns := 0
 	secondDoneRuns := 0
 	p := l.Hold()
@@ -382,7 +382,7 @@ func TestPendingCopiesShareHold(t *testing.T) {
 
 // Calling Post with a nil callback panics.
 func TestPostPanicsWithNilCallback(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	r := recoverPanic(func() {
 		if err := l.Post(nil); err != nil {
 			t.Error(err)
@@ -396,7 +396,7 @@ func TestPostPanicsWithNilCallback(t *testing.T) {
 // Done with a nil callback panics in Done, on the caller's goroutine, instead
 // of later on the loop goroutine when the posted wrapper calls it.
 func TestDonePanicsWithNilCallback(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	p := l.Hold()
 	r := recoverPanic(func() {
 		if err := p.Done(nil); err != nil {
@@ -426,7 +426,7 @@ func TestDoneOnZeroPendingPanics(t *testing.T) {
 // If wake fails, Post returns the error and does not queue the callback, so
 // an error from Post always means the callback will not run.
 func TestPostDoesNotQueueWhenWakeFails(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	// Close only the poller, so Post gets past the closed check and fails
 	// in wake.
 	if err := l.poller.close(); err != nil {
@@ -443,7 +443,7 @@ func TestPostDoesNotQueueWhenWakeFails(t *testing.T) {
 // Close drops callbacks that were posted but have not run: a later Run does
 // not run them.
 func TestCloseDropsQueuedCallbacks(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	runs := 0
 	if err := l.Post(func() error { runs++; return nil }); err != nil {
 		t.Fatal(err)
@@ -462,7 +462,7 @@ func TestCloseDropsQueuedCallbacks(t *testing.T) {
 // A hold whose Done failed because the loop was closed is never released.
 // Run must still return (with ErrClosed) instead of blocking forever.
 func TestDoneAfterCloseDoesNotHangRun(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	p := l.Hold()
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
@@ -478,7 +478,7 @@ func TestDoneAfterCloseDoesNotHangRun(t *testing.T) {
 // A callback posted while a batch is running must survive to the next batch
 // and run exactly once (runTasks must not clear or drop the live queue).
 func TestCallbackPostedDuringBatchRunsOnce(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	runs := 0
 	cb := func() error {
 		return l.Post(func() error { runs++; return nil })
@@ -496,7 +496,7 @@ func TestCallbackPostedDuringBatchRunsOnce(t *testing.T) {
 
 // Once the two task slices have grown, running a batch must not allocate.
 func TestRunTasksDoesNotAllocate(t *testing.T) {
-	l := newLoop(t)
+	l := newTestLoop(t)
 	cb := func() error { return nil }
 	n := 100
 	for range n {
